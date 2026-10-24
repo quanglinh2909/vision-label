@@ -129,10 +129,12 @@ class ImageService:
         files: list[tuple[str, bytes]],
         by: str = "",
         annotations: dict[str, list] | None = None,
+        approved: bool = False,
     ) -> UploadResult:
         """Thêm ảnh. `annotations` (nhập từ dataset có sẵn): {tên file: nhãn đã đổi sang định dạng
-        của app}. Ảnh có nhãn hợp lệ vào thẳng "chờ duyệt", ghi người nhập là người gán; nhãn lỗi
-        thì ảnh vẫn được thêm nhưng ở "chưa gán", kèm lý do trong `errors`."""
+        của app}. Ảnh có nhãn hợp lệ vào thẳng "chờ duyệt" (hoặc "đã duyệt" nếu `approved`, VD khôi phục
+        một phiên bản dataset), ghi người nhập là người gán; nhãn lỗi thì ảnh vẫn được thêm nhưng ở
+        "chưa gán", kèm lý do trong `errors`."""
         project = await self._projects.get_entity(project_id)
         classes = load_classes(project.classes)
         annotations = annotations or {}
@@ -178,7 +180,9 @@ class ImageService:
                 now = utcnow()
                 item.annotations = json.dumps(clean)
                 item.object_count = count_objects(project.task, clean)
-                item.status = S.IN_REVIEW
+                item.status = S.LABELED if approved else S.IN_REVIEW
+                if approved:
+                    item.reviewed_by, item.reviewed_at = by, now
                 item.labeled_by = item.edited_by = item.assigned_to = by
                 item.labeled_at = item.edited_at = item.assigned_at = now
             item = await self._repo.save(item)

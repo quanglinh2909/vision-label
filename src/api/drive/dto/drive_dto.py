@@ -30,5 +30,13 @@ class DriveConfigOut(OutputSchema):
     redirect_uri: str = Field(description="Dán địa chỉ này vào 'Authorized redirect URIs' của OAuth client")
 
 
+class DriveFileOut(OutputSchema):
+    id: str
+    name: str
+    size: int
+    modified: datetime | None
+    folder: str = Field(description="Thư mục chứa (thường là tên project)")
+
+
 class ConnectOut(OutputSchema):
     auth_url: str

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import tempfile
+import uuid
+from pathlib import Path as FsPath
 from typing import Annotated
 from urllib.parse import quote
 
 from fastapi import Header, Path, Query
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
+from starlette.background import BackgroundTask
 
 from fastapi_modular import BadRequestError
 from fastapi_modular.core.controller import controller, get, post, put
@@ -14,7 +18,7 @@ from src.api.auth.guards import AdminOnly, Authenticated, caller
 from src.api.datasets.dataset_controller import DOWNLOAD
 from src.api.datasets.dto.dataset_dto import DatasetOut
 from src.api.drive.drive_service import DriveService
-from src.api.drive.dto.drive_dto import ConnectOut, DriveConfigOut, DriveConfigUpdate
+from src.api.drive.dto.drive_dto import ConnectOut, DriveConfigOut, DriveConfigUpdate, DriveFileOut
 from src.api.drive.google_client import DriveError
 from src.core.security import TokenSigner
 
@@ -66,6 +70,16 @@ class DriveController:
     @post("/drive/disconnect", response_model=DriveConfigOut, summary="Ngắt kết nối (thu hồi quyền)")
     async def disconnect(self, host: Host, proto: Proto = "") -> DriveConfigOut:
         return self._service.out(await self._service.disconnect(), _base(host, proto))
+
+    @get("/drive/files", response_model=list[DriveFileOut], summary="Các bản zip dataset đã đẩy lên Drive")
+    async def list_files(self) -> list[DriveFileOut]:
+        return await self._service.list_files()
+
+    @get("/drive/files/{file_id}/download", response_class=FileResponse, summary="Tải một bản zip từ Drive về (để khôi phục)")
+    async def download(self, file_id: Annotated[str, Path(description="ID file trên Drive")]) -> FileResponse:
+        dest = FsPath(tempfile.gettempdir()) / f"visionlabel-{uuid.uuid4().hex}.zip"
+        await self._service.download(file_id, dest)
+        return FileResponse(dest, media_type="application/zip", background=BackgroundTask(dest.unlink, missing_ok=True))
 
     @post("/datasets/{dataset_id}/drive", response_model=DatasetOut, summary="Đẩy bản zip lên Google Drive (chạy nền)")
     async def upload(self, dataset_id: DatasetId) -> DatasetOut:

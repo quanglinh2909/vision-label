@@ -1,10 +1,13 @@
-// Tải ảnh lên: chọn file, chọn cả thư mục, hoặc kéo thả (kể cả thư mục).
-// Thư mục là dataset đã gán nhãn (YOLO có data.yaml, hoặc ImageFolder cho phân loại) thì hiện bảng
-// ghép lớp nguồn -> lớp của project, rồi nhập ảnh kèm nhãn thẳng vào "Cần review" (xem importer.js).
+// Tải ảnh lên: chọn file, chọn cả thư mục, kéo thả (kể cả thư mục), file .zip, hoặc lấy từ Google Drive.
+// Là dataset đã gán nhãn thì hiện bảng ghép lớp nguồn -> lớp của project, rồi nhập ảnh kèm nhãn vào
+// "Cần review" hoặc thẳng "Đã duyệt" (xem importer.js):
+//   - phiên bản do VisionLabel xuất (có visionlabel.json): khôi phục nguyên cấu hình lớp + nhãn gốc;
+//   - YOLO (data.yaml) cho project nhận diện, ImageFolder cho project phân loại.
 
 import { api } from '../api.js';
 import { baseOf, compat, convertObject, detectDataset, inferClasses, newClassFrom, parseDataYaml, parseYoloLabel } from '../importer.js';
-import { $, clsLabel, esc, h, ICONS, SHAPES, toast, UNKNOWN, UNKNOWN_LABEL } from '../ui.js';
+import { unzip } from '../unzip.js';
+import { $, clsLabel, esc, fmtDate, h, ICONS, isAdmin, openDialog, SHAPES, toast, UNKNOWN, UNKNOWN_LABEL } from '../ui.js';
 
 const IMG_EXT = /\.(jpe?g|png|bmp|webp)$/i;
 const BATCH_FILES = 16;
@@ -29,6 +32,14 @@ async function filesFromEntry(entry, out) {
 
 const shapeText = (shape, k) => `${SHAPES[shape].label}${shape === 'pose' ? ` ${k} điểm` : ''}`;
 const sameName = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+const mb = n => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(n < 10 * 1024 * 1024 ? 1 : 0)} MB`);
+/** Chọn nơi đưa ảnh kèm nhãn vào. */
+const destPick = approved => `
+  <div class="dest-pick" role="radiogroup" aria-label="Đưa ảnh có nhãn vào">
+    <span class="muted">Đưa ảnh có nhãn vào</span>
+    <label class="check"><input type="radio" name="dest" value="review" ${approved ? '' : 'checked'}> <b>Cần review</b> (duyệt lại)</label>
+    <label class="check"><input type="radio" name="dest" value="approved" ${approved ? 'checked' : ''}> <b>Đã duyệt</b> (vào dataset ngay)</label>
+  </div>`;
 const slug = text => text.replace(/đ/g, 'd').replace(/Đ/g, 'D').normalize('NFD').replace(/[̀-ͯ]/g, '')
   .replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').toLowerCase();
 
@@ -43,13 +54,15 @@ export async function mount(el, ctx) {
         <div class="row" style="justify-content:center">
           <button class="primary" data-pick="files">Chọn ảnh</button>
           <button data-pick="dir">Chọn thư mục</button>
+          <button data-drive hidden title="Lấy một phiên bản dataset đã đẩy lên Google Drive để gán nhãn tiếp">Lấy từ Google Drive</button>
         </div>
-        <p class="muted" style="font-size:13.5px;max-width:64ch">Nhận jpg, png, bmp, webp. Ảnh trùng tên với ảnh đã có trong project sẽ được bỏ qua.<br>
+        <p class="muted" style="font-size:13.5px;max-width:64ch">Nhận jpg, png, bmp, webp và file .zip. Ảnh trùng tên với ảnh đã có trong project sẽ được bỏ qua.<br>
+          Phiên bản dataset do VisionLabel xuất (zip tải về, hoặc lấy từ Google Drive) được khôi phục nguyên lớp và nhãn.<br>
           ${classify
             ? 'Thư mục dạng <b>ImageFolder</b> (<code>train/&lt;lớp&gt;/ảnh</code>) sẽ được nhận ra và nhập kèm câu trả lời vào Cần review.'
             : 'Thư mục dataset <b>YOLO</b> (có <code>data.yaml</code>, <code>images/</code>, <code>labels/</code>) sẽ được nhận ra và nhập kèm nhãn vào Cần review.'}<br>
           Khi chọn thư mục, trình duyệt sẽ hỏi xác nhận trước khi tải lên. Kéo thả thư mục vào đây thì không bị hỏi.</p>
-        <input type="file" data-in="files" accept=".jpg,.jpeg,.png,.bmp,.webp" multiple hidden>
+        <input type="file" data-in="files" accept=".jpg,.jpeg,.png,.bmp,.webp,.zip" multiple hidden>
         <input type="file" data-in="dir" webkitdirectory multiple hidden>
       </div>
       <div class="panel import-panel" data-import hidden></div>
@@ -89,13 +102,188 @@ export async function mount(el, ctx) {
   async function take(all) {
     if (busy) return toast('Đang tải lên, đợi xong lượt này đã', 'warn');
     box.hidden = true;
-    const ds = detectDataset(all);
+    all = await expandZips(all);
+    let ds = detectDataset(all);
+    if (ds?.kind === 'visionlabel') {
+      try {
+        const manifest = JSON.parse(await ds.manifestFile.text());
+        if (manifest.project?.task === ctx.project.task) return showRestore(ds, manifest);
+        toast(`Bản này thuộc project ${manifest.project?.task === 'classify' ? 'phân loại' : 'nhận diện đối tượng'}, khác loại project hiện tại.`, 'warn', 7000);
+      } catch (err) { toast(`visionlabel.json bị hỏng (${err.message}), đọc như dataset thường`, 'warn'); }
+      ds = ds.fallback();
+    }
     if (ds && (ds.kind === 'yolo') !== classify) {
       try { return await (classify ? showFolderImport(ds) : showYoloImport(ds)); }
       catch (err) { toast(`Không đọc được dataset: ${err.message}`, 'err'); }
     }
     if (ds?.kind === 'yolo' && classify) toast('Thư mục là dataset YOLO nhưng project này là phân loại: chỉ tải ảnh, bỏ nhãn.', 'warn', 6000);
     upload(all.filter(f => IMG_EXT.test(f.name)), null, all.length);
+  }
+
+  /** File .zip -> các file bên trong (giải nén ngay trên trình duyệt). */
+  async function expandZips(all) {
+    const zips = all.filter(f => /\.zip$/i.test(f.name));
+    if (!zips.length) return all;
+    const out = all.filter(f => !zips.includes(f));
+    for (const z of zips) {
+      try {
+        out.push(...await unzip(z, `${z.name.replace(/\.zip$/i, '')}/`, (d, t) => {
+          if (d % 25 === 0 || d === t) progress(`Đang giải nén ${z.name}…`, d / t, `${d} / ${t} file`);
+        }));
+      } catch (err) { toast(`${z.name}: ${err.message}`, 'err', 8000); }
+    }
+    $('[data-job]', page).hidden = true;
+    return out;
+  }
+
+  /** Thanh tiến độ dùng chung cho tải từ Drive / giải nén (trước khi bắt đầu tải lên). */
+  function progress(title, ratio, nums = '') {
+    const job = $('[data-job]', page);
+    job.hidden = false; $('[data-done]', page).hidden = true; $('[data-log]', page).innerHTML = '';
+    $('[data-title]', page).textContent = title;
+    $('[data-bar]', page).style.width = `${Math.round(ratio * 100)}%`;
+    $('[data-nums]', page).textContent = nums;
+  }
+
+  // ---------------------------------------------------------------- Google Drive
+  const driveBtn = $('[data-drive]', page);
+  if (isAdmin()) api.drive().then(d => { driveBtn.hidden = !d.connected; }).catch(() => { });
+  driveBtn.addEventListener('click', async () => {
+    let files;
+    try { files = await api.driveFiles(); } catch (err) { return toast(err.message, 'err'); }
+    if (!files.length) return toast('Chưa có bản zip nào trên Google Drive (do app này đẩy lên)', 'warn', 6000);
+    const pickId = await openDialog(`
+      <h3>Lấy từ Google Drive</h3>
+      <p class="muted">Các bản zip dataset app đã đẩy lên, mới nhất trước. Chọn một bản để khôi phục ảnh và nhãn vào project này.</p>
+      <div class="drive-files">${files.map((f, i) => `
+        <label class="drive-file"><input type="radio" name="file" value="${esc(f.id)}" ${i ? '' : 'checked'}>
+          <span><b>${esc(f.name)}</b><span class="muted">${esc(f.folder)} · ${mb(f.size)}${f.modified ? ` · ${fmtDate(f.modified)}` : ''}</span></span></label>`).join('')}
+      </div>
+      <div class="row"><span class="spacer"></span><button type="button" data-cancel>Huỷ</button><button class="primary" type="submit">Lấy bản này</button></div>`,
+    form => form.file.value || [...form.querySelectorAll('[name=file]')].find(r => r.checked)?.value);
+    if (!pickId) return;
+    const f = files.find(x => x.id === pickId);
+    try {
+      busy = true;
+      const blob = await api.driveDownload(pickId, (got, total) => progress(`Đang tải ${f.name} từ Google Drive…`, total ? got / total : 0, total ? `${mb(got)} / ${mb(total)}` : mb(got)));
+      busy = false;
+      take([new File([blob], f.name)]);
+    } catch (err) { busy = false; $('[data-job]', page).hidden = true; toast(`Không tải được từ Drive: ${err.message}`, 'err', 8000); }
+  });
+
+  // ---------------------------------------------------------------- VisionLabel (khôi phục)
+  async function showRestore(ds, manifest) {
+    const src = manifest.project;
+    const imgs = manifest.images.filter(im => ds.byPath.has(im.path));
+    const classes = ctx.project.classes;
+    const used = {};
+    for (const im of imgs) for (const o of im.annotations) if (!classify || o.value !== UNKNOWN) used[o.cls] = (used[o.cls] || 0) + 1;
+    const rows = src.classes.map(c => ({ c, k: c.keypoints?.length || 0, shape: c.shape, n: used[c.id] || 0 }));
+    // Mặc định ghép lớp cùng tên (tên trong dataset), không có thì tạo lại y như bản gốc.
+    const target = rows.map(r => classes.find(c => sameName(c.name, r.c.name))?.id ?? NEW);
+    const ST = { ok: 'Khôi phục nguyên vẹn', convert: 'Chuyển đổi', no: 'Không nhập' };
+    const noteOf = (r, sel) => {
+      if (sel === SKIP) return { status: 'no', note: classify ? 'Câu trả lời của câu hỏi này không được nhập.' : 'Đối tượng của lớp này không được nhập.' };
+      if (sel === NEW) return { status: 'ok', note: `Tạo lại ${classify ? 'câu hỏi' : 'lớp'} y như bản gốc.` };
+      const t = classes.find(c => c.id === sel);
+      if (classify) {
+        const extra = r.c.options.filter(o => !t.options.some(x => sameName(x.name, o.name))).length;
+        return { status: 'ok', note: extra ? `Thêm ${extra} lựa chọn còn thiếu vào câu hỏi này.` : '' };
+      }
+      return compat(r, t);
+    };
+    const kind = classify ? 'Câu hỏi' : 'Lớp';
+    const options = (r, sel) => [
+      `<option value="${NEW}" ${sel === NEW ? 'selected' : ''}>+ Tạo ${classify ? 'câu hỏi' : 'lớp'} "${esc(clsLabel(r.c))}"</option>`,
+      ...classes.map(c => `<option value="${c.id}" ${sel === c.id ? 'selected' : ''}>${esc(clsLabel(c))}${classify ? '' : ` (${shapeText(c.shape, c.keypoints?.length)})`}</option>`),
+      `<option value="${SKIP}" ${sel === SKIP ? 'selected' : ''}>Bỏ qua</option>`,
+    ].join('');
+
+    function render() {
+      box.innerHTML = `
+        <div class="row"><h3>Khôi phục phiên bản VisionLabel</h3>
+          <span class="muted">${esc(src.name)} · ${imgs.length} ảnh${manifest.format ? ` · xuất dạng ${esc(manifest.format)}` : ''}</span></div>
+        <p class="muted">Bản này có đủ cấu hình lớp và nhãn gốc, nên khôi phục không mất gì kể cả khi định dạng xuất đã phải chuyển đổi.
+          Ảnh được thêm với đúng tên gốc.</p>
+        <div class="table-wrap"><table class="plan">
+          <thead><tr><th>${kind} trong bản sao</th><th>${classify ? 'Lựa chọn' : 'Kiểu'}</th><th class="num">${classify ? 'Ảnh' : 'Đối tượng'}</th><th>Nhập vào</th><th></th></tr></thead>
+          <tbody>${rows.map((r, i) => {
+            const n = noteOf(r, target[i]);
+            return `<tr class="${n.status === 'no' ? 'off' : ''}">
+              <td><b>${esc(clsLabel(r.c))}</b>${r.c.label && r.c.label !== r.c.name ? ` <code>${esc(r.c.name)}</code>` : ''}</td>
+              <td class="muted">${classify ? r.c.options.map(o => esc(o.label || o.name)).join(', ') : shapeText(r.shape, r.k)}</td>
+              <td class="num">${r.n}</td>
+              <td><select data-map="${i}">${options(r, target[i])}</select></td>
+              <td><span class="st ${n.status}">${ST[n.status]}</span>${n.note ? `<span class="note">${esc(n.note)}</span>` : ''}</td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table></div>
+        ${destPick(true)}
+        <div class="row">
+          <button data-cancel>Huỷ</button><span class="spacer"></span>
+          <button data-plain title="Tải ảnh vào Chưa gán nhãn, không lấy nhãn">Chỉ tải ảnh, bỏ nhãn</button>
+          <button class="primary" data-go>Khôi phục ${imgs.length} ảnh</button>
+        </div>`;
+      box.querySelectorAll('[data-map]').forEach(s => s.addEventListener('change', () => {
+        const v = s.value;
+        target[+s.dataset.map] = v === NEW || v === SKIP ? v : +v;
+        render();
+      }));
+      $('[data-cancel]', box).addEventListener('click', () => { box.hidden = true; });
+      $('[data-plain]', box).addEventListener('click', () => { box.hidden = true; upload(imgs.map(im => ds.byPath.get(im.path))); });
+      $('[data-go]', box).addEventListener('click', go);
+    }
+
+    async function go() {
+      const approved = $('[name=dest]:checked', box)?.value === 'approved';
+      // 1. Tạo lớp / câu hỏi còn thiếu, thêm lựa chọn còn thiếu — một lần lưu.
+      const strip = c => (classify
+        ? { name: c.name, label: c.label, options: c.options.map(o => ({ name: o.name, label: o.label })) }
+        : { name: c.name, label: c.label, shape: c.shape, ...(c.shape === 'pose' ? { keypoints: c.keypoints, flip: c.flip, auto_corners: c.auto_corners } : {}) });
+      let list = ctx.project.classes.map(c => ({ ...c }));
+      let changed = false;
+      rows.forEach((r, i) => {
+        if (target[i] === NEW) { list.push(strip(r.c)); changed = true; return; }
+        if (!classify || target[i] === SKIP) return;
+        const t = list.find(c => c.id === target[i]);
+        const extra = r.c.options.filter(o => !t.options.some(x => sameName(x.name, o.name)));
+        if (extra.length) { t.options = [...t.options, ...extra.map(o => ({ name: o.name, label: o.label }))]; changed = true; }
+      });
+      if (changed) {
+        try {
+          const p = await api.updateProject(ctx.pid, { classes: list });
+          Object.assign(ctx.project, p);
+          list = p.classes;
+          ctx.refreshProject();
+        } catch (err) { return toast(`Không tạo được lớp: ${err.message}`, 'err'); }
+      }
+      // 2. id lớp (và lựa chọn) cũ -> id mới trong project này.
+      const map = {}, optMap = {};
+      rows.forEach((r, i) => {
+        const t = target[i] === SKIP ? null : list.find(c => (target[i] === NEW ? sameName(c.name, r.c.name) : c.id === target[i]));
+        map[r.c.id] = t;
+        if (t && classify) optMap[r.c.id] = Object.fromEntries(r.c.options.map(o => [o.id, t.options.find(x => sameName(x.name, o.name))?.id]));
+      });
+      // 3. Nhãn từng ảnh, giữ tên file gốc.
+      const files = [], annotations = {};
+      let dropped = 0;
+      for (const im of imgs) {
+        if (annotations[im.filename]) continue; // trùng tên trong bản sao: giữ ảnh đầu
+        const out = [];
+        for (const o of im.annotations) {
+          const t = map[o.cls];
+          if (!t) continue;
+          if (classify) out.push({ cls: t.id, value: o.value === UNKNOWN ? UNKNOWN : optMap[o.cls][o.value] ?? UNKNOWN });
+          else { const obj = convertObject(o, t); obj ? out.push(obj) : dropped++; }
+        }
+        annotations[im.filename] = out;
+        files.push(new File([ds.byPath.get(im.path)], im.filename));
+      }
+      box.hidden = true;
+      upload(files, annotations, files.length, dropped, approved);
+    }
+    render();
+    box.hidden = false;
   }
 
   // ---------------------------------------------------------------- YOLO
@@ -143,6 +331,7 @@ export async function mount(el, ctx) {
             </tr>`;
           }).join('')}</tbody>
         </table></div>
+        ${destPick(false)}
         <div class="row">
           <button data-cancel>Huỷ</button><span class="spacer"></span>
           <button data-plain title="Tải ảnh vào Chưa gán nhãn, không lấy nhãn">Chỉ tải ảnh, bỏ nhãn</button>
@@ -159,6 +348,7 @@ export async function mount(el, ctx) {
     }
 
     async function go() {
+      const approved = $('[name=dest]:checked', box)?.value === 'approved';
       // 1. Tạo các lớp mới (một lần, trước khi tải), rồi ghép lớp nguồn -> id lớp của project.
       const fresh = rows.filter((_, i) => target[i] === NEW).map(r => newClassFrom(r, meta));
       let list = ctx.project.classes;
@@ -188,7 +378,7 @@ export async function mount(el, ctx) {
         annotations[baseOf(it.path)] ??= out;
       }
       box.hidden = true;
-      upload(ds.items.map(it => it.file), annotations, 0, dropped);
+      upload(ds.items.map(it => it.file), annotations, 0, dropped, approved);
     }
     render();
     box.hidden = false;
@@ -239,6 +429,7 @@ export async function mount(el, ctx) {
             <td class="num">${f.count}</td>
             <td><select data-map="${i}">${opts(target[i])}</select></td></tr>`).join('')}</tbody>
         </table></div>
+        ${destPick(false)}
         <div class="row">
           <button data-cancel>Huỷ</button><span class="spacer"></span>
           <button data-plain title="Tải ảnh vào Chưa gán nhãn, không lấy câu trả lời">Chỉ tải ảnh, bỏ nhãn</button>
@@ -257,6 +448,7 @@ export async function mount(el, ctx) {
     }
 
     async function go() {
+      const approved = $('[name=dest]:checked', box)?.value === 'approved';
       // Thêm câu hỏi / lựa chọn mới (nếu có) trước, rồi ghép thư mục -> id lựa chọn.
       const freshOpts = folders.filter((_, i) => target[i] === NEW).map(f => ({ name: slug(f.folder) || f.folder, label: f.label }));
       let list = ctx.project.classes;
@@ -283,14 +475,14 @@ export async function mount(el, ctx) {
         annotations[baseOf(it.path)] ??= [{ cls: cls.id, value: value[i] }];
       });
       box.hidden = true;
-      upload(files, annotations);
+      upload(files, annotations, files.length, 0, approved);
     }
     render();
     box.hidden = false;
   }
 
   // ---------------------------------------------------------------- tải lên
-  async function upload(files, annotations = null, total = files.length, dropped = 0) {
+  async function upload(files, annotations = null, total = files.length, dropped = 0, approved = false) {
     if (busy) return toast('Đang tải lên, đợi xong lượt này đã', 'warn');
     const ignored = total - files.length;
     if (!files.length) return toast('Không có file ảnh nào', 'warn');
@@ -312,7 +504,7 @@ export async function mount(el, ctx) {
     for (const batch of batches) {
       try {
         const labels = annotations && Object.fromEntries(batch.map(f => [f.name, annotations[f.name]]).filter(([, v]) => v));
-        const r = await api.upload(ctx.pid, batch, labels);
+        const r = await api.upload(ctx.pid, batch, labels, approved);
         added += r.added; imported += r.imported || 0; skipped += r.skipped.length; errors += r.errors.length;
         r.errors.forEach(m => line(m, 'err'));
       } catch (err) {
@@ -323,9 +515,11 @@ export async function mount(el, ctx) {
       bar.style.width = `${(sent / files.length) * 100}%`;
       $('[data-nums]', page).textContent = `${sent} / ${files.length} ảnh`;
     }
-    $('[data-title]', page).textContent = `Đã thêm ${added} ảnh${imported ? ` (${imported} ảnh kèm nhãn vào Cần review)` : ''}${skipped ? `, bỏ qua ${skipped} ảnh trùng tên` : ''}${errors ? `, ${errors} lỗi` : ''}`;
+    $('[data-title]', page).textContent = `Đã thêm ${added} ảnh${imported ? ` (${imported} ảnh kèm nhãn vào ${approved ? 'Đã duyệt' : 'Cần review'})` : ''}${skipped ? `, bỏ qua ${skipped} ảnh trùng tên` : ''}${errors ? `, ${errors} lỗi` : ''}`;
     $('[data-done]', page).hidden = false;
     $('[data-review]', page).hidden = !imported;
+    $('[data-review]', page).href = `#/p/${ctx.pid}/${approved ? 'labeled' : 'review'}`;
+    $('[data-review]', page).textContent = approved ? 'Xem Đã duyệt' : 'Xem Cần review';
     busy = false;
     const p = await ctx.refreshProject();
     // "next": server phát ảnh chưa ai giữ, nhiều người cùng bắt đầu không bị trùng ảnh.

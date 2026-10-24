@@ -1,4 +1,6 @@
 // Nhận ra một thư mục tải lên là dataset ĐÃ gán nhãn, đọc nhãn và đổi sang định dạng của app.
+//   VisionLabel: có visionlabel.json (mọi phiên bản app xuất ra) -> khôi phục nguyên cấu hình lớp và
+//     nhãn gốc, không mất gì. Ưu tiên cách này trước YOLO / ImageFolder.
 //   YOLO detect / pose / segment: có data.yaml; nhãn nằm ở labels/... tương ứng với images/...
 //     (hoặc file .txt cùng tên, cùng thư mục với ảnh).
 //   ImageFolder (phân loại): <train|val|test>/<lớp>/<ảnh> hoặc <lớp>/<ảnh>. Có classes.json (do app
@@ -60,6 +62,13 @@ export function parseDataYaml(text) {
 /** Tìm dataset trong danh sách file. Trả null nếu chỉ là ảnh thường. */
 export function detectDataset(files) {
   const all = files.map(f => ({ f, p: pathOf(f) }));
+  const manifest = shortest(all.filter(x => /(^|\/)visionlabel\.json$/i.test(x.p)));
+  if (manifest) {
+    const root = dirOf(manifest.p);
+    const byPath = new Map(all.filter(x => x.p.startsWith(root) && IMG_EXT.test(x.p)).map(x => [x.p.slice(root.length), x.f]));
+    // Dự phòng khi manifest không dùng được (VD khác loại project): đọc như YOLO / ImageFolder.
+    return { kind: 'visionlabel', manifestFile: manifest.f, byPath, fallback: () => detectDataset(files.filter(f => f !== manifest.f)) };
+  }
   const yaml = shortest(all.filter(x => /(^|\/)data\.ya?ml$/i.test(x.p)));
   if (yaml) {
     const root = dirOf(yaml.p);
@@ -150,7 +159,8 @@ export function convertObject(o, t) {
   const pt = p => p && [c01(p[0]), c01(p[1])];
   let box = o.box;
   if (!box) {
-    const xs = o.poly.map(p => p[0]), ys = o.poly.map(p => p[1]);
+    const pts = o.poly || (o.pts || []).filter(Boolean);
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
     box = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
   }
   if (t.shape === 'box') {

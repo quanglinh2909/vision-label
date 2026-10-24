@@ -19,7 +19,7 @@ from fastapi_modular.core.logging import get_logger
 from fastapi_modular.infrastructure.database import Repository
 from src.api.datasets.entities.dataset_model import DatasetVersion
 from src.api.datasets.exporter import build_zip
-from src.api.drive.dto.drive_dto import DriveConfigOut, DriveConfigUpdate
+from src.api.drive.dto.drive_dto import DriveConfigOut, DriveConfigUpdate, DriveFileOut
 from src.api.drive.entities.drive_model import CONFIG_ID, DriveConfig
 from src.api.drive.google_client import DriveError, GoogleDrive
 from src.api.live.live_events import LiveEvents
@@ -244,6 +244,39 @@ class DriveService:
         )
         log.info("drive.uploaded", dataset=dataset_id, size=total, file=file_id)
         return updated
+
+    # ---------------------------------------------------------------- lấy về (khôi phục ở máy khác)
+    async def _authed(self) -> tuple[DriveConfig, str]:
+        cfg = await self.config()
+        if not cfg.refresh_token:
+            raise BadRequestError("Chưa kết nối Google Drive. Vào trang Google Drive để kết nối.")
+        try:
+            return cfg, await self._token(cfg)
+        except DriveError as e:
+            raise BadRequestError(f"Kết nối Google Drive không còn hiệu lực ({e.message}). Kết nối lại.") from e
+
+    async def list_files(self) -> list[DriveFileOut]:
+        """Các bản zip dataset app đã đẩy lên (mới nhất trước), kèm tên thư mục chứa."""
+        _, token = await self._authed()
+        files = await run_in_threadpool(self._g.list_zips, token)
+        names: dict[str, str] = {}
+        for pid in {p for f in files for p in f.get("parents", [])}:
+            names[pid] = await run_in_threadpool(self._g.name_of, token, pid)
+        return [
+            DriveFileOut(
+                id=f["id"], name=f["name"], size=int(f.get("size") or 0), modified=f.get("modifiedTime"),
+                folder=names.get((f.get("parents") or [""])[0], ""),
+            )
+            for f in files
+        ]
+
+    async def download(self, file_id: str, dest: Path) -> None:
+        _, token = await self._authed()
+        try:
+            await run_in_threadpool(self._g.download, token, file_id, dest)
+        except DriveError as e:
+            dest.unlink(missing_ok=True)
+            raise BadRequestError(e.message) from e
 
     async def reset_interrupted(self) -> int:
         """Server tắt giữa chừng thì các upload dở không bao giờ xong — đánh dấu lỗi để bấm tải lại."""

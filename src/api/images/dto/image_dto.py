@@ -119,6 +119,6 @@ class RevisionOut(OutputSchema):
 
 class UploadResult(OutputSchema):
     added: int
-    imported: int = Field(0, description="Số ảnh nhập kèm nhãn, vào thẳng Cần review")
+    imported: int = Field(0, description="Số ảnh nhập kèm nhãn (vào Cần review, hoặc Đã duyệt nếu approved)")
     skipped: list[str] = Field(default_factory=list, description="Tên đã có trong project")
     errors: list[str] = Field(default_factory=list, description="File không đọc được")

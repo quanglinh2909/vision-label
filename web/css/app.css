@@ -592,3 +592,15 @@ input.mono { font-family: Consolas, "Cascadia Mono", monospace; font-size: 13.5p
 .drive-prog .bar { width: 80px; height: 5px; }
 .drive-prog .bar > span { display: block; height: 100%; background: var(--ok); transition: width .3s; }
 .drive-err { font: 600 13px var(--body); color: #ff9d96; cursor: help; }
+
+/* Nhập / khôi phục dataset */
+.dest-pick { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; padding: 10px 12px; font-size: 14px;
+  background: var(--asphalt-2); border: 1px solid var(--asphalt-4); border-radius: 6px; }
+.drive-files { display: grid; gap: 4px; max-height: 50vh; overflow-y: auto; margin: 0 -4px; padding: 0 4px; }
+.drive-file { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--asphalt-4); border-radius: 5px; cursor: pointer; }
+.drive-file:has(input:checked) { border-color: var(--marking); background: #34332a; }
+.drive-file input { margin-top: 3px; }
+.drive-file > span { display: grid; gap: 2px; min-width: 0; }
+.drive-file b { overflow-wrap: anywhere; }
+.drive-file .muted { font-size: 13px; }
+.dialog:has(.drive-files) { width: min(560px, calc(100vw - 32px)); }

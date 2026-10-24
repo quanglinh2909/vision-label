@@ -154,13 +154,15 @@ class DatasetService:
             )
             for im in labeled
         ]
+        # Kèm vào visionlabel.json để máy khác khôi phục được nguyên cấu hình lớp.
+        meta = {"name": project.name, "task": project.task.value, "classes": classes}
         if question is not None:
             stats, names = await run_in_threadpool(
-                export_imagefolder, root, question, items, arch, payload.val_ratio, payload.include_unknown
+                export_imagefolder, root, question, items, arch, payload.val_ratio, payload.include_unknown, meta, fmt
             )
         else:
             stats, names = await run_in_threadpool(
-                export_yolo, root, classes, selected, items, fmt, payload.val_ratio, payload.include_background
+                export_yolo, root, classes, selected, items, fmt, payload.val_ratio, payload.include_background, meta
             )
         if not stats.train + stats.val:
             shutil.rmtree(root, ignore_errors=True)

@@ -60,6 +60,7 @@ class ImageController:
             str | None,
             Form(description='Nhập từ dataset có sẵn: JSON {"tên file": [đối tượng, ...]} theo định dạng nhãn của app'),
         ] = None,
+        approved: Annotated[bool, Form(description="Ảnh kèm nhãn vào thẳng Đã duyệt thay vì Cần review")] = False,
     ) -> UploadResult:
         self._service.ensure_files(files)
         try:
@@ -69,7 +70,7 @@ class ImageController:
         if labels is not None and not isinstance(labels, dict):
             raise BadRequestError("annotations phải là object {tên file: [đối tượng]}")
         payload = [(f.filename or "", await f.read()) for f in files]
-        return await self._service.upload(project_id, payload, by=caller().username, annotations=labels)
+        return await self._service.upload(project_id, payload, by=caller().username, annotations=labels, approved=approved)
 
     @get("/projects/{project_id}/images", response_model=Page[ImageOut], summary="Ảnh trong một danh sách")
     async def list_images(

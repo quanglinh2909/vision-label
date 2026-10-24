@@ -15,6 +15,10 @@ Phân loại — ImageFolder (torchvision), kèm train.py cho MobileNet / ResNet
     ├── classes.json
     └── train.py
 
+Mọi phiên bản đều kèm `visionlabel.json` (xem `write_manifest`): cấu hình lớp và nhãn GỐC của từng
+ảnh theo định dạng của app, để máy khác khôi phục project / gán nhãn tiếp mà không mất gì — kể cả khi
+định dạng xuất phải chuyển đổi (VD lớp khung ghi vào YOLO pose).
+
 Mỗi lớp có kiểu vẽ riêng nên không phải lớp nào cũng xuất được sang mọi định dạng:
 `plan()` cho biết trước lớp nào xuất nguyên vẹn, lớp nào phải chuyển đổi, lớp nào không xuất được.
 Chạy đồng bộ (copy file) — service gọi qua thread pool.
@@ -238,6 +242,24 @@ def _unique_stems(items: list[ExportItem]) -> dict[str, str]:
     return out
 
 
+MANIFEST = "visionlabel.json"
+
+
+def write_manifest(root: Path, project: dict, fmt: ExportFormat, placed: list[tuple[str, ExportItem]]) -> None:
+    """Ghi visionlabel.json: {project: {name, task, classes}, images: [{path, filename, annotations}]}.
+    `path` tính từ thư mục phiên bản (VD images/train/a.jpg); `filename` là tên gốc trong project."""
+    data = {
+        "app": "VisionLabel",
+        "schema": 1,
+        "format": fmt.value,
+        "project": project,
+        "images": [
+            {"path": rel, "filename": it.filename, "annotations": json.loads(it.annotations or "[]")} for rel, it in placed
+        ],
+    }
+    (root / MANIFEST).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
 def _yaml(names: list[str], has_val: bool, fmt: ExportFormat, pose: PoseSpec | None) -> str:
     lines = "\n".join(f"  {i}: {json.dumps(c, ensure_ascii=False)}" for i, c in enumerate(names))
     # Cố ý KHÔNG ghi `path:`. Thiếu nó, Ultralytics lấy thư mục chứa data.yaml làm gốc,
@@ -265,6 +287,7 @@ def export_yolo(
     fmt: ExportFormat,
     val_ratio: float,
     include_background: bool,
+    project: dict | None = None,
 ) -> tuple[ExportStats, list[str]]:
     """Xuất các lớp `selected` (giữ thứ tự cấu hình). Trả (thống kê, tên lớp theo class index)."""
     if root.exists():
@@ -291,13 +314,16 @@ def export_yolo(
     kept = [it for it, _ in rows]
     splits = _splits(kept, val_ratio)
     stems = _unique_stems(kept)
+    placed: list[tuple[str, ExportItem]] = []
     for it, lines in rows:
         split = splits[it.image_id]
         img_dir, lbl_dir = root / "images" / split, root / "labels" / split
         img_dir.mkdir(parents=True, exist_ok=True)
         lbl_dir.mkdir(parents=True, exist_ok=True)
         stem = stems[it.image_id]
-        shutil.copy2(it.source, img_dir / f"{stem}{it.source.suffix.lower()}")
+        image_name = f"{stem}{it.source.suffix.lower()}"
+        shutil.copy2(it.source, img_dir / image_name)
+        placed.append((f"images/{split}/{image_name}", it))
         (lbl_dir / f"{stem}.txt").write_text("".join(f"{ln}\n" for ln in lines), encoding="utf-8")
         setattr(stats, split, getattr(stats, split) + 1)
         stats.objects += len(lines)
@@ -306,6 +332,8 @@ def export_yolo(
     names = [c["name"] for c in chosen]
     root.mkdir(parents=True, exist_ok=True)
     (root / "data.yaml").write_text(_yaml(names, stats.val > 0, fmt, pose), encoding="utf-8")
+    if project is not None:
+        write_manifest(root, project, fmt, placed)
     return stats, names
 
 
@@ -323,6 +351,8 @@ def export_imagefolder(
     arch: str,
     val_ratio: float,
     include_unknown: bool,
+    project: dict | None = None,
+    fmt: ExportFormat = ExportFormat.MOBILENET,
 ) -> tuple[ExportStats, list[str]]:
     """Xuất một lớp phân loại thành ImageFolder: mỗi lựa chọn một thư mục.
 
@@ -353,11 +383,14 @@ def export_imagefolder(
     kept = [it for it, _ in rows]
     splits = _splits(kept, val_ratio)
     stems = _unique_stems(kept)
+    placed: list[tuple[str, ExportItem]] = []
     for it, value in rows:
         split = splits[it.image_id]
         target = root / split / folders[value]
         target.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(it.source, target / f"{stems[it.image_id]}{it.source.suffix.lower()}")
+        image_name = f"{stems[it.image_id]}{it.source.suffix.lower()}"
+        shutil.copy2(it.source, target / image_name)
+        placed.append((f"{split}/{folders[value]}/{image_name}", it))
         setattr(stats, split, getattr(stats, split) + 1)
         stats.objects += 1
 
@@ -381,6 +414,8 @@ def export_imagefolder(
         encoding="utf-8",
     )
     (root / "train.py").write_text(TRAIN_SCRIPT.replace("__ARCH__", arch), encoding="utf-8")
+    if project is not None:
+        write_manifest(root, project, fmt, placed)
     return stats, [labels[f] for f in order]
 
 

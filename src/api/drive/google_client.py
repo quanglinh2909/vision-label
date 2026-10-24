@@ -12,6 +12,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 from src.core.config import DriveSettings
@@ -137,6 +138,41 @@ class GoogleDrive:
 
     def ensure_folder(self, token: str, name: str, parent: str | None) -> str:
         return self.find_folder(token, name, parent) or self.create_folder(token, name, parent)
+
+    def list_zips(self, token: str) -> list[dict]:
+        """Mọi file zip app đã tạo (quyền drive.file chỉ thấy file do chính OAuth client này tạo)."""
+        out, page = [], ""
+        while True:
+            q = {
+                "q": "mimeType = 'application/zip' and trashed = false",
+                "fields": "nextPageToken, files(id, name, size, modifiedTime, parents)",
+                "orderBy": "modifiedTime desc",
+                "pageSize": 200,
+                **({"pageToken": page} if page else {}),
+            }
+            data = _call("GET", f"{self.s.api_url}/files?{urllib.parse.urlencode(q)}", headers=_bearer(token))[2]
+            out += data.get("files", [])
+            page = data.get("nextPageToken", "")
+            if not page or len(out) >= 2000:
+                return out
+
+    def name_of(self, token: str, file_id: str) -> str:
+        try:
+            return _call("GET", f"{self.s.api_url}/files/{file_id}?fields=name", headers=_bearer(token))[2].get("name", "")
+        except DriveError:
+            return ""
+
+    def download(self, token: str, file_id: str, dest: Path) -> None:
+        """Tải nội dung file về `dest`, đọc từng khúc để không ôm cả file trong RAM."""
+        req = urllib.request.Request(f"{self.s.api_url}/files/{file_id}?alt=media", headers=_bearer(token))
+        try:
+            with _opener.open(req, timeout=TIMEOUT) as r, dest.open("wb") as f:
+                while block := r.read(1024 * 1024):
+                    f.write(block)
+        except urllib.error.HTTPError as e:
+            raise DriveError(f"Không tải được file từ Drive ({e.code})", e.code, auth=e.code == 401) from e
+        except urllib.error.URLError as e:
+            raise DriveError(f"Không kết nối được tới Google: {e.reason}") from e
 
     def start_upload(self, token: str, name: str, parent: str, size: int, mime: str) -> str:
         """Mở phiên upload nhiều phần; trả địa chỉ để gửi từng phần."""

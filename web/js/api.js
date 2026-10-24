@@ -51,10 +51,11 @@ export const api = {
   classUsage: id => req('GET', `/projects/${id}/class-usage`),
 
   /** annotations (nhập dataset có sẵn): {tên file: [đối tượng]} -> ảnh đó vào thẳng Cần review. */
-  upload(pid, files, annotations = null) {
+  upload(pid, files, annotations = null, approved = false) {
     const fd = new FormData();
     for (const f of files) fd.append('files', f, f.name);
     if (annotations && Object.keys(annotations).length) fd.append('annotations', JSON.stringify(annotations));
+    if (approved) fd.append('approved', 'true');
     return req('POST', `/projects/${pid}/images`, fd);
   },
   // queue: unlabeled | todo | review | labeled. assignee: chỉ ảnh giao cho người này (quản trị viên).
@@ -89,6 +90,24 @@ export const api = {
   driveConnect: () => req('POST', '/drive/connect'),
   driveDisconnect: () => req('POST', '/drive/disconnect'),
   driveUpload: id => req('POST', `/datasets/${id}/drive`),
+  driveFiles: () => req('GET', '/drive/files'),
+  /** Tải một bản zip từ Drive (qua server) về trình duyệt, báo tiến độ theo byte. */
+  async driveDownload(id, onProgress) {
+    const r = await fetch(`/api/drive/files/${encodeURIComponent(id)}/download`);
+    if (!r.ok) {
+      let msg = `${r.status} ${r.statusText}`;
+      try { msg = (await r.json()).message || msg; } catch { /* không phải JSON */ }
+      throw Object.assign(new Error(msg), { status: r.status });
+    }
+    const total = +r.headers.get('Content-Length') || 0, reader = r.body.getReader(), parts = [];
+    for (let got = 0; ;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parts.push(value); got += value.length;
+      onProgress?.(got, total);
+    }
+    return new Blob(parts, { type: 'application/zip' });
+  },
   /** Link tải kèm key: dùng được cả khi không đăng nhập (curl, Colab). */
   downloadUrl: d => `/api/datasets/${d.id}/download?key=${encodeURIComponent(d.download_key)}`,
 };

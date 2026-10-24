@@ -101,6 +101,23 @@ Menu tài khoản → **Google Drive** (quản trị viên). Làm theo 4 bước
   hết hạn kết nối sau 7 ngày; bấm *Publish app* (quyền `drive.file` không cần Google duyệt) để dùng lâu dài.
 - Google chỉ nhận redirect `http://localhost` / `127.0.0.1` hoặc HTTPS có tên miền. Chạy sau tên miền thì đặt `APP_DRIVE__REDIRECT_URI`.
 
+## Gán nhãn tiếp ở máy khác (khôi phục từ Google Drive)
+
+Mỗi phiên bản dataset (zip) đều kèm `visionlabel.json`: cấu hình lớp đầy đủ (tên hiển thị, kiểu vẽ, các điểm,
+lựa chọn) và **nhãn gốc** của từng ảnh. Ở máy khác (clone code, database trống):
+
+1. Mở trang **Google Drive**, dán **cùng Client ID / secret** như máy cũ (quyền `drive.file` chỉ thấy file do chính
+   OAuth client đó tạo) rồi kết nối. Máy mới chạy ở địa chỉ khác thì thêm redirect URI của nó vào OAuth client.
+2. Tạo project cùng loại, vào **Tải ảnh lên** → **Lấy từ Google Drive** → chọn bản zip. (Hoặc tải zip từ Drive về
+   rồi thả thẳng file .zip vào trang.)
+3. Bảng khôi phục tự tạo lại các lớp y như bản gốc (hoặc ghép vào lớp có sẵn cùng tên), chọn đưa ảnh vào
+   **Đã duyệt** (mặc định) hay **Cần review**, bấm Khôi phục.
+
+Khôi phục không mất gì kể cả khi định dạng xuất đã phải chuyển đổi (VD lớp khung trong bản YOLO pose vẫn về lại
+thành khung), ảnh giữ tên gốc. Chỉ ảnh có trong phiên bản đó mới khôi phục được (ảnh chưa gán / chờ duyệt không
+nằm trong dataset). Zip xuất trước khi có tính năng này không có `visionlabel.json`: vẫn nhập được như dataset
+YOLO / ImageFolder thường, nhưng nên tạo lại phiên bản mới để có bản khôi phục đầy đủ.
+
 ## Phân công và review
 
 ```

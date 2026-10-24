@@ -1,0 +1,81 @@
+# ---------------------------------------------------------------- Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Gói và bản dựng
+build/
+dist/
+sdist/
+wheels/
+*.egg
+*.egg-info
+.eggs/
+MANIFEST
+
+# Môi trường ảo
+.venv/
+venv/
+ENV/
+env/
+.python-version
+
+# Test, độ phủ, kiểm kiểu, lint
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+.pytype/
+.pyre/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+*.cover
+.hypothesis/
+.cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ------------------------------------------------------------- Dự án này
+# .env chứa DSN và mật khẩu thật — KHÔNG BAO GIỜ commit.
+.env
+.env.*
+!.env.example
+
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+
+# ------------------------------------------------------------------- IDE
+.idea/
+.vscode/
+.fleet/
+.zed/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+
+# --------------------------------------------------------- Hệ điều hành
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+
+# --------------------------------------------------------------- Công cụ
+.direnv/
+node_modules/
+
+# Ảnh đã upload và dataset xuất ra — dữ liệu, không phải mã nguồn.
+storage/
+dataset/

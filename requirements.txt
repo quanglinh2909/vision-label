@@ -1,0 +1,14 @@
+# Thư viện của dự án. Người khác clone về chỉ cần:
+#     pip install -r requirements.txt
+#
+# `fam install <thành-phần>` tự cập nhật dòng dưới — cài thêm redis thì nó thành
+# fastapi-modular[redis,sqlite]>=... Đừng liệt kê tay sqlalchemy hay motor:
+# khoảng phiên bản của chúng do fastapi-modular giữ.
+fastapi-modular[sqlite]>=0.4.0
+# Upload ảnh (multipart) + đọc kích thước / tạo ảnh thu nhỏ.
+python-multipart>=0.0.9
+pillow>=10.0
+# structlog cần để in log có màu trên terminal Windows.
+colorama>=0.4; sys_platform == "win32"
+# Máy chủ WebSocket cho uvicorn (kênh realtime /ws/live).
+websockets>=12

@@ -692,3 +692,11 @@ table.plan.metrics td[title] { cursor: help; }
 .vlib-row { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid var(--asphalt-4); border-radius: 5px; flex-wrap: wrap; }
 .vlib-row b { overflow-wrap: anywhere; }
 .job-error.warn { background: #3a3424; border-color: #6b5d2a; color: #f5e3a8; }
+.dup-groups { display: grid; gap: 8px; max-height: 70vh; overflow-y: auto; }
+.dup-group { display: flex; gap: 8px; overflow-x: auto; padding: 6px; border: 1px solid var(--asphalt-4); border-radius: 5px; }
+.dup-item { display: grid; gap: 3px; padding: 3px; flex: none; width: 150px; background: transparent; border: 2px solid transparent; border-radius: 4px; text-align: left; }
+.dup-item img { width: 100%; aspect-ratio: 16 / 10; object-fit: contain; background: #000; border-radius: 3px; opacity: .55; }
+.dup-item span { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dup-item.keep { border-color: var(--marking); }
+.dup-item.keep img { opacity: 1; }
+.dup-item.keep span { color: var(--marking); font-weight: 600; }

@@ -55,6 +55,12 @@ class DeleteImagesRequest(InputSchema):
     assignee: str | None = Field(default=None, max_length=64, description="'' = chưa giao cho ai; bỏ trống = mọi người")
 
 
+class DuplicatesRequest(InputSchema):
+    by_name: bool = Field(default=True, description="Gom theo tên gốc Roboflow (bỏ phần .rf.<mã>)")
+    by_image: bool = Field(default=True, description="Gom theo hình giống nhau (dHash)")
+    threshold: int = Field(default=2, ge=0, le=12, description="Số bit được lệch khi so hình; cao = dễ gom nhầm")
+
+
 class RejectRequest(InputSchema):
     note: str = Field(min_length=1, max_length=1000, description="Cần sửa gì")
 

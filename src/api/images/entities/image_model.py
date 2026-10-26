@@ -60,6 +60,8 @@ class ImageItem(Entity):
     locked_by: str = field(default="", metadata=column(length=64))
     locked_until: datetime | None = None
     lock_token: str = field(default="", metadata=column(length=36))
+    # dHash của ảnh thu nhỏ (16 ký tự hex) để tìm ảnh trùng — tính lần đầu quét, xem images/duplicates.py.
+    phash: str = field(default="", metadata=column(length=16))
 
     created_at: datetime = field(default_factory=utcnow)
     updated_at: datetime = field(default_factory=utcnow)

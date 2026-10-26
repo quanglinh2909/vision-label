@@ -19,6 +19,7 @@ from src.api.images.dto.image_dto import (
     AssignRequest,
     ClaimRequest,
     DeleteImagesRequest,
+    DuplicatesRequest,
     ImageOut,
     ImageRef,
     LockRequest,
@@ -194,6 +195,11 @@ class ImageController:
     @delete("/images/{image_id}/annotations", response_model=ImageOut, summary="Đưa về chưa gán nhãn")
     async def clear_annotations(self, image_id: ImageId) -> ImageOut:
         return ImageOut.build(await self._service.clear_annotations(image_id, caller()))
+
+    @post("/projects/{project_id}/duplicates", response_model=dict, guards=[AdminOnly],
+          summary="Tìm các nhóm ảnh trùng (giữ ảnh đầu mỗi nhóm, xoá phần còn lại bằng /images/delete)")
+    async def duplicates(self, project_id: ProjectId, payload: DuplicatesRequest) -> dict:
+        return await self._service.find_duplicates(project_id, payload.by_name, payload.by_image, payload.threshold)
 
     @post(
         "/projects/{project_id}/images/delete",

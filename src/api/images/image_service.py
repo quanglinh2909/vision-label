@@ -18,6 +18,8 @@ from fastapi_modular.infrastructure.database import Repository
 from src.api.auth.auth_service import AuthService
 from src.api.auth.guards import Caller
 from src.api.images.annotations import count_objects, validate_objects
+from src.api.images.duplicates import dhash
+from src.api.images.duplicates import group as dup_group
 from src.api.projects.classes import load as load_classes
 from src.api.images.dto.image_dto import UploadResult
 from src.api.images.entities.image_model import ImageItem, ImageStatus
@@ -591,6 +593,43 @@ class ImageService:
                 await self._live.user(owner, project_id, "deleted", who.username, image_ids=owned, count=len(owned))
         log.info("images.deleted", project=project_id, count=done, skipped=skipped, by=who.username)
         return done, skipped
+
+    async def find_duplicates(self, project_id: str, by_name: bool, by_image: bool, threshold: int) -> dict:
+        """Các nhóm ảnh trùng trong project (xem images/duplicates.py). Ảnh đầu mỗi nhóm là ảnh nên giữ."""
+        await self._projects.get_entity(project_id)
+        rows = await self._repo.find(project_id=project_id, order_by=None)
+        if by_image:
+            # dHash tính một lần từ ảnh thu nhỏ rồi lưu lại; lần quét sau chỉ tính ảnh mới.
+            missing = [r for r in rows if not r.phash]
+
+            def compute() -> dict[str, str]:
+                out = {}
+                for r in missing:
+                    try:
+                        out[r.id] = dhash(self._storage.thumb_path(r.project_id, r.id))
+                    except Exception:  # noqa: BLE001 - mất / hỏng ảnh thu nhỏ: bỏ qua ảnh đó
+                        continue
+                return out
+
+            hashes = await run_in_threadpool(compute)
+            for r in missing:
+                if r.id in hashes:
+                    r.phash = hashes[r.id]
+                    await self._repo.update_where({"id": r.id}, phash=r.phash)
+        items = [
+            {"id": r.id, "filename": r.filename, "phash": r.phash or "", "status": r.status.value,
+             "object_count": r.object_count, "created": r.created_at.timestamp(), "assigned_to": r.assigned_to,
+             "classes": [o.get("cls") for o in json.loads(r.annotations or "[]")
+                         if "box" in o or "pts" in o or "poly" in o or o.get("value", -1) != -1]}
+            for r in rows
+        ]
+        groups = await run_in_threadpool(dup_group, items, by_name, by_image, threshold)
+        strip = lambda it: {k: it[k] for k in ("id", "filename", "status", "object_count", "assigned_to")}  # noqa: E731
+        return {
+            "images": len(rows),
+            "extra": sum(len(g) - 1 for g in groups),
+            "groups": [[strip(it) for it in g] for g in groups],
+        }
 
     async def delete_queue(self, project_id: str, queue: Queue, assignee: str | None, who: Caller) -> tuple[int, int]:
         """Xoá mọi ảnh của một danh sách (theo đúng bộ lọc người được giao đang xem).

@@ -79,6 +79,8 @@ export const api = {
   saveAnnotations: (id, objects, approve = false) => req('PUT', `/images/${id}/annotations`, { objects, approve }),
   clearAnnotations: id => req('DELETE', `/images/${id}/annotations`),
   deleteImage: id => req('DELETE', `/images/${id}`),
+  /** Nhóm ảnh trùng: {images, extra, groups: [[ảnh giữ, ...ảnh thừa]]}. */
+  duplicates: (pid, body) => req('POST', `/projects/${pid}/duplicates`, body),
   deleteImages: (pid, ids) => req('POST', `/projects/${pid}/images/delete`, { ids }),
   /** Xoá cả danh sách chưa gán nhãn; assignee như khi xem ('' = chưa giao, undefined = mọi người). */
   deleteAllUnlabeled: (pid, assignee) => req('POST', `/projects/${pid}/images/delete`, { all: true, queue: 'unlabeled', assignee }),

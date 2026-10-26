@@ -31,6 +31,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # --- KHỞI ĐỘNG: chạy sau khi database và hàng đợi đã sẵn sàng ---
         # Import ở đây: module api chỉ được nạp xong khi register_routes đã quét.
         from src.api.drive.drive_service import DriveService
+        from src.api.gpu.gpu_service import GpuService
         from src.api.images.image_service import ImageService
 
         fixed = await container.resolve(ImageService).backfill_new_columns()
@@ -39,6 +40,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         stuck = await container.resolve(DriveService).reset_interrupted()
         if stuck:
             log.info("drive.uploads_interrupted", count=stuck)
+        gpu = container.resolve(GpuService)
+        watching = await gpu.resume()
+        if watching:
+            log.info("gpu.jobs_resumed", count=watching)
         log.info("app.ready")
 
         try:
@@ -46,3 +51,5 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         finally:
             # --- TẮT: chạy trước khi khung đóng database ---
             log.info("app.closing")
+            # Đóng SSH: agent trên server GPU thấy hết stdin thì tự thoát, trả GPU. Việc train vẫn chạy.
+            gpu.close_all()

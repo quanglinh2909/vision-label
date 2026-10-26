@@ -46,6 +46,15 @@ class RejectManyRequest(InputSchema):
     note: str = Field(min_length=1, max_length=1000, description="Cần sửa gì (chung cho các ảnh)")
 
 
+class DeleteImagesRequest(InputSchema):
+    # Xoá đúng các ảnh này...
+    ids: list[str] = Field(default_factory=list, max_length=100_000)
+    # ...hoặc mọi ảnh của danh sách `queue` (chỉ "unlabeled"), lọc theo `assignee` như khi xem.
+    all: bool = False
+    queue: Literal["unlabeled"] = "unlabeled"
+    assignee: str | None = Field(default=None, max_length=64, description="'' = chưa giao cho ai; bỏ trống = mọi người")
+
+
 class RejectRequest(InputSchema):
     note: str = Field(min_length=1, max_length=1000, description="Cần sửa gì")
 

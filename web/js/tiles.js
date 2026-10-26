@@ -112,3 +112,67 @@ export function imageTile(img, project, { href, assignee = false, onDeleted } = 
   });
   return t;
 }
+
+// ---------- lọc theo lớp và số đối tượng (project nhận diện) ----------
+// Trên URL: ?cls=<id lớp> = ảnh CÓ đối tượng lớp đó; &missing=1 = ảnh CHƯA có (tìm ảnh còn thiếu nhãn);
+// &count=<n>&op=eq|gte|lte = số đối tượng của lớp đó (không có cls = đếm mọi lớp), VD ảnh có đúng 2 xe.
+const OPS = { eq: '=', gte: '≥', lte: '≤' };
+
+/** {cls, missing, count, op} từ query của URL, hoặc null nếu không lọc. cls / count có thể là null. */
+export function readClassFilter(query) {
+  const num = v => (v === undefined || v === '' || Number.isNaN(+v) ? null : +v);
+  const cls = num(query.cls), count = num(query.count);
+  if (cls === null && count === null) return null;
+  return { cls, missing: cls !== null && query.missing === '1', count: query.missing === '1' ? null : count, op: OPS[query.op] ? query.op : 'eq' };
+}
+
+/** Đuôi query giữ bộ lọc khi dựng link (bắt đầu bằng &, rỗng nếu không lọc). */
+export const filterQuery = f => (!f ? '' : [
+  f.cls !== null ? `&cls=${f.cls}` : '', f.missing ? '&missing=1' : '',
+  f.count !== null ? `&count=${f.count}${f.op !== 'eq' ? `&op=${f.op}` : ''}` : '',
+].join(''));
+
+/** Tham số gửi API (api.images / api.refs). */
+export const filterParams = f => (!f ? {} : {
+  cls: f.cls ?? undefined, missing: f.missing || undefined,
+  count: f.count ?? undefined, op: f.count !== null && f.op !== 'eq' ? f.op : undefined,
+});
+
+/** Ảnh có khớp bộ lọc không — giống matches_filter ở server (images/image_service.py). */
+export function matchesFilter(img, f) {
+  if (!f) return true;
+  const n = img.annotations.filter(o => f.cls === null || o.cls === f.cls).length;
+  if (f.missing) return n === 0;
+  if (f.count === null) return n > 0;
+  return f.op === 'gte' ? n >= f.count : f.op === 'lte' ? n <= f.count : n === f.count;
+}
+
+/** Ô chọn lớp + ô số đối tượng; đổi gì thì gọi go(filter mới hoặc null). Project phân loại không có. */
+export function classFilter(project, f, go) {
+  if (project.task !== 'detect' || !project.classes.length) return null;
+  const cur = !f || f.cls === null ? '' : `${f.missing ? 'miss' : 'has'}:${f.cls}`;
+  const opt = (v, text) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${esc(text)}</option>`;
+  const el = h(`<span class="cls-filter-box" title="Lọc ảnh theo lớp và số đối tượng. VD: Có Xe máy, = 2 là ảnh có đúng 2 xe máy">
+    <select class="cls-filter" aria-label="Lọc theo lớp">
+      ${opt('', 'Mọi lớp')}
+      <optgroup label="Ảnh có lớp">${project.classes.map(c => opt(`has:${c.id}`, `Có ${clsLabel(c)}`)).join('')}</optgroup>
+      <optgroup label="Ảnh chưa có lớp (thiếu nhãn)">${project.classes.map(c => opt(`miss:${c.id}`, `Thiếu ${clsLabel(c)}`)).join('')}</optgroup>
+    </select>
+    <select class="cls-op" aria-label="So sánh số đối tượng">${Object.entries(OPS).map(([k, t]) => `<option value="${k}" ${f?.op === k ? 'selected' : ''}>${t}</option>`).join('')}</select>
+    <input class="cls-count" type="number" min="0" max="10000" placeholder="số" aria-label="Số đối tượng" value="${f?.count ?? ''}">
+  </span>`);
+  const [sel, op, count] = el.querySelectorAll('select, input');
+  const countable = () => !sel.value.startsWith('miss:'); // "thiếu lớp" = 0 đối tượng, không cần ô số
+  const apply = () => {
+    const [kind, id] = sel.value.split(':');
+    const n = count.value.trim() === '' || !countable() ? null : Math.max(0, Math.floor(+count.value));
+    const cls = sel.value ? +id : null;
+    go(cls === null && n === null ? null : { cls, missing: kind === 'miss', count: n, op: op.value });
+  };
+  const refresh = () => { op.hidden = count.hidden = !countable(); };
+  sel.addEventListener('change', () => { refresh(); apply(); });
+  op.addEventListener('change', () => { if (count.value.trim() !== '') apply(); });
+  count.addEventListener('change', apply); // Enter hoặc rời ô số
+  refresh();
+  return el;
+}

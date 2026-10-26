@@ -61,7 +61,9 @@ API docs: http://localhost:8000/docs
    - Project phân loại: **ImageFolder** (`train/<lựa chọn>/ảnh`), mỗi thư mục ghép với một lựa chọn,
      *Không rõ*, lựa chọn mới hoặc bỏ qua. Có `classes.json` (do app xuất) thì lấy luôn tên hiển thị.
    - Ảnh trùng tên với ảnh đã có bị bỏ qua, nên nhập lại cùng thư mục không tạo bản trùng.
-3. **Chưa gán nhãn** → *Bắt đầu gán nhãn*. Gán xong bấm `D` / `→` / `Enter` để lưu và sang ảnh tiếp.
+3. **Chưa gán nhãn** → *Bắt đầu gán nhãn*. Gán xong bấm `D` / `Enter` để lưu và sang ảnh tiếp (trong **Cần review**:
+   duyệt và sang ảnh tiếp). `→` / `←` chỉ lướt sang ảnh sau / trước để xem, không lưu, không duyệt (đang sửa dở thì
+   phần sửa vẫn được lưu, ảnh ở nguyên chờ duyệt).
    Ảnh bấm tiếp mà không có đối tượng nào được lưu là *ảnh nền*.
 4. **Đã gán nhãn**: xem lại toàn bộ dạng lưới, bấm vào ảnh để sửa.
 5. **Dataset**: chọn định dạng, tạo phiên bản (v1, v2…). Mỗi phiên bản là một bản chụp cố định trong
@@ -118,6 +120,39 @@ thành khung), ảnh giữ tên gốc. Chỉ ảnh có trong phiên bản đó m
 nằm trong dataset). Zip xuất trước khi có tính năng này không có `visionlabel.json`: vẫn nhập được như dataset
 YOLO / ImageFolder thường, nhưng nên tạo lại phiên bản mới để có bản khôi phục đầy đủ.
 
+## Server GPU: tự gán nhãn và train
+
+Máy Ubuntu có GPU NVIDIA, app nói chuyện qua **SSH** (paramiko): không cần mở cổng nào khác, ảnh gửi đi đánh nhãn
+cũng đi trong kết nối SSH. Thêm được nhiều server.
+
+1. Trên server, làm tay một lần: bật SSH (`sudo apt install openssh-server`; app vào server bằng SSH nên không tự cài
+   được) và có driver NVIDIA (`nvidia-smi` thấy GPU; chưa có thì `sudo ubuntu-drivers install` rồi `sudo reboot`. App
+   không tự cài driver vì phải khởi động lại máy, máy bật Secure Boot còn phải xác nhận khoá tại chỗ).
+2. Menu tài khoản → **Server GPU** → *Thêm server*: IP, cổng, tài khoản, mật khẩu **hoặc** khoá riêng (không passphrase).
+   Bỏ trống cả hai thì dùng khoá SSH có sẵn của máy chạy app. Bấm *Kiểm tra kết nối* (đọc GPU, bộ nhớ, Python).
+3. *Cài môi trường* (chạy nền): tạo `<thư mục làm việc>/venv` (thiếu `python3-venv` thì tự cài bằng sudo với mật khẩu
+   SSH đã lưu), cài `ultralytics`; tuỳ chọn cài thêm và tải sẵn
+   `nvidia/LocateAnything-3B` (~7 GB). Xong thì server tự dùng python trong venv.
+4. Trong project → **Model AI**:
+   - *Tự gán nhãn*: chọn server, model **YOLO** (`yolo26n.pt`…, hoặc model vừa train) hoặc **LocateAnything-3B**
+     (tìm theo mô tả chữ, chỉ ra khung), và mỗi lớp của project khớp với tên lớp / mô tả nào. Nhiều tên ngăn bằng dấu
+     phẩy cùng về một lớp (`car, truck, bus`). Model tìm ra lớp khác thì bỏ: chỉ gán đúng các lớp của project.
+   - *Train*: chọn phiên bản dataset + server. YOLO detect / pose / segment chạy Ultralytics, phân loại chạy `train.py`
+     của dataset. Theo dõi epoch, mAP, log; train xong bấm *Dùng để tự gán nhãn*.
+5. Trong trình gán nhãn có nút **Tự gán nhãn** (cả quản trị viên lẫn người gán): kết quả được **thêm** vào ảnh, chưa lưu,
+   `Ctrl+Z` bỏ được; lưu như bình thường nên vẫn qua Cần review. Bật *Mở ảnh chưa có nhãn là tự chạy luôn* nếu muốn.
+
+Kiểu vẽ của lớp quyết định cách đổi: khung lấy khung; đa giác lấy viền mask (YOLO segment), model chỉ có khung thì
+thành hình chữ nhật; pose lấy điểm của YOLO pose (phải đúng số điểm, tự sắp 4 góc nếu lớp bật), LocateAnything bỏ qua lớp pose.
+
+Trên server, mỗi server một thư mục làm việc (mặc định `~/visionlabel`): `agent.py` giữ model trong GPU (tự tắt sau
+`APP_GPU__AGENT_IDLE_MINUTES` phút không dùng, hoặc bấm *Giải phóng GPU*), `jobs/<id>/` cho mỗi lần train (dataset,
+`log.txt`, `train/weights/best.pt`). Train chạy bằng `nohup`, app tắt hay mất mạng thì vẫn chạy tiếp; app mở lại
+theo dõi tiếp. Mật khẩu / khoá SSH lưu trong `data/app.db` như secret của Google Drive.
+
+LocateAnything-3B: GPU từ Ampere (RTX 30xx, A100…), nên từ 12 GB VRAM; giấy phép NVIDIA chỉ cho nghiên cứu,
+**phi thương mại**.
+
 ## Phân công và review
 
 ```
@@ -170,6 +205,7 @@ src/
     ├── images/             upload, duyệt, lưu nhãn; annotations.py: định dạng nhãn + kiểm theo lớp
     ├── datasets/           phiên bản dataset; exporter.py: kế hoạch xuất, YOLO detect/pose/segment, ImageFolder + zip
     ├── drive/              Google Drive: cấu hình OAuth, google_client.py (REST + upload nhiều phần), đẩy zip dataset
+    ├── gpu/                Server GPU qua SSH: ssh.py, agent.py (chạy trên server, giữ model), scripts.py (cài đặt / train), autolabel.py (kết quả model -> nhãn)
     ├── live/               WebSocket /ws/live: gateway + LiveEvents (phát sự kiện)
     └── health/
 

@@ -78,6 +78,8 @@ export async function mount(el, ctx) {
           ${classify ? '<span></span>' : '<label class="check" style="padding-bottom:10px"><input type="checkbox" name="bg" checked> Gồm ảnh nền</label>'}
         </div>
         <label class="field">Ghi chú <input type="text" name="note" placeholder="Ví dụ: thêm 500 ảnh chụp ban đêm"></label>
+        <label class="check" title="Mặc định chỉ ảnh đã duyệt mới vào dataset. Bật để lấy cả ảnh trong Cần review: nhãn của chúng chưa được kiểm, có thể còn sai hoặc thiếu.">
+          <input type="checkbox" name="review"> Gồm cả ảnh đang chờ duyệt (Cần review) <span class="muted small" data-review-n></span></label>
         <div class="row">
           <p class="muted" data-hint></p><span class="spacer"></span>
           <button class="primary" type="submit">Tạo dataset</button>
@@ -154,11 +156,16 @@ export async function mount(el, ctx) {
   async function loadPlan() {
     page.querySelectorAll('[data-format]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.format === format)));
     try {
-      plan = await api.datasetPlan(ctx.pid, format);
+      plan = await api.datasetPlan(ctx.pid, format, form.review.checked);
     } catch (err) { planBox.innerHTML = `<p class="notice">${esc(err.message)}</p>`; return; }
     classify ? renderClassifyPlan() : renderDetectPlan();
-    $('[data-hint]', page).textContent = `Có ${plan.labeled} ảnh đã duyệt.`;
+    const review = form.review.checked;
+    $('[data-review-n]', page).textContent = plan.in_review ? `(${plan.in_review} ảnh)` : '(không có ảnh nào)';
+    $('[data-hint]', page).textContent = review
+      ? `Có ${plan.labeled} ảnh: ${plan.labeled - plan.in_review} đã duyệt, ${plan.in_review} chờ duyệt (nhãn chưa được kiểm).`
+      : `Có ${plan.labeled} ảnh đã duyệt.`;
   }
+  form.review.addEventListener('change', () => loadPlan());
   page.querySelectorAll('[data-format]').forEach(b => b.addEventListener('click', () => { format = b.dataset.format; loadPlan(); }));
 
   // ---------- các phiên bản ----------
@@ -179,6 +186,7 @@ export async function mount(el, ctx) {
           ${isAdmin() ? '<button class="sm danger" data-del>Xoá</button>' : ''}
         </div>
         ${d.note ? `<p>${esc(d.note)}</p>` : ''}
+        ${d.include_review ? `<p class="small"><span class="tag in_review">Gồm ảnh chờ duyệt</span> <span class="muted">lấy cả ${d.review_count} ảnh chưa được duyệt (nhãn chưa kiểm)</span></p>` : ''}
         <p class="classes-line"><span class="muted">${isCls ? `${esc(d.question)}:` : 'Lớp:'}</span> ${d.class_names.map((n, i) => `<code>${i} ${esc(n)}</code>`).join(' ')}</p>
         <div class="nums">
           <span><b>${d.train_count}</b>ảnh train</span>
@@ -273,6 +281,7 @@ export async function mount(el, ctx) {
       note: form.note.value.trim(),
       val_ratio: (+form.val.value || 0) / 100,
       format,
+      include_review: form.review.checked,
     };
     if (classify) {
       if (!form.question) return toast('Project chưa có lớp nào', 'warn');

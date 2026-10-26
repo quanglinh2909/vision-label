@@ -1,4 +1,4 @@
-// Khối tài khoản: tên + vai trò, link Thành viên (quản trị viên), đổi mật khẩu, đăng xuất.
+// Khối tài khoản: tên + vai trò, link Thành viên / Google Drive / Server GPU (quản trị viên), đổi mật khẩu, đăng xuất.
 
 import { api } from './api.js';
 import { esc, h, isAdmin, openDialog, session, toast } from './ui.js';
@@ -29,6 +29,7 @@ const icon = body => `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
 const MENU_ICONS = {
   users: icon('<circle cx="8" cy="7" r="3"/><path d="M2.5 17c0-3 2.5-5 5.5-5s5.5 2 5.5 5M14 5.5a2.5 2.5 0 010 5M15.5 12.5c1.5.6 2.5 2.2 2.5 4.5"/>'),
   drive: icon('<path d="M7 3h6l5 9h-6z"/><path d="M7 3 2 12l3 5 5-9"/><path d="M5 17h11l2-5"/>'),
+  gpu: icon('<rect x="5" y="5" width="10" height="10" rx="1.5"/><path d="M8 8h4v4H8zM8 2.5V5M12 2.5V5M8 15v2.5M12 15v2.5M2.5 8H5M2.5 12H5M15 8h2.5M15 12h2.5"/>'),
   key: icon('<circle cx="7" cy="12" r="3.5"/><path d="M9.5 9.5L17 2M14 5l2 2M12 7l1.5 1.5"/>'),
   out: icon('<path d="M8 3H4v14h4M13 6l4 4-4 4M17 10H8"/>'),
 };
@@ -47,7 +48,8 @@ export function accountBar({ compact = false } = {}) {
       </summary>
       <div class="menu" role="menu">
         ${isAdmin() ? `<a role="menuitem" href="#/users">${MENU_ICONS.users}Thành viên</a>
-        <a role="menuitem" href="#/drive">${MENU_ICONS.drive}Google Drive</a>` : ''}
+        <a role="menuitem" href="#/drive">${MENU_ICONS.drive}Google Drive</a>
+        <a role="menuitem" href="#/gpu">${MENU_ICONS.gpu}Server GPU</a>` : ''}
         <button type="button" role="menuitem" data-pass>${MENU_ICONS.key}Đổi mật khẩu</button>
         <hr>
         <button type="button" role="menuitem" data-out class="out">${MENU_ICONS.out}Đăng xuất</button>

@@ -68,8 +68,11 @@ class DatasetController:
         guards=[Authenticated, AdminOnly],
         summary="Xem trước: lớp nào xuất được sang định dạng này",
     )
-    async def plan(self, project_id: ProjectId, format: Annotated[ExportFormat, Query()]) -> PlanOut:  # noqa: A002
-        return await self._service.plan(project_id, format)
+    async def plan(
+        self, project_id: ProjectId, format: Annotated[ExportFormat, Query()],  # noqa: A002
+        include_review: Annotated[bool, Query(description="Tính cả ảnh đang chờ duyệt")] = False,
+    ) -> PlanOut:
+        return await self._service.plan(project_id, format, include_review)
 
     @post(
         "/projects/{project_id}/datasets",

@@ -62,18 +62,25 @@ class DatasetService:
     async def list_versions(self, project_id: str) -> list[DatasetVersion]:
         return await self._repo.query().where(project_id=project_id).order_by_desc("version").all()
 
-    async def _labeled(self, project_id: str) -> list[ImageItem]:
-        return await self._images.find(project_id=project_id, status=ImageStatus.LABELED, order_by="filename")
+    async def _labeled(self, project_id: str, include_review: bool = False) -> list[ImageItem]:
+        """Ảnh đã duyệt; `include_review` = lấy cả ảnh đang chờ duyệt (nhãn chưa được quản trị viên xác nhận)."""
+        statuses = [ImageStatus.LABELED] + ([ImageStatus.IN_REVIEW] if include_review else [])
+        return await (self._images.query()
+                      .where(project_id=project_id, status__in=[s.value for s in statuses])
+                      .order_by_asc("filename").all())
 
-    async def plan(self, project_id: str, fmt: ExportFormat) -> PlanOut:
+    async def plan(self, project_id: str, fmt: ExportFormat, include_review: bool = False) -> PlanOut:
         """Trước khi xuất: lớp nào xuất được sang `fmt`, bao nhiêu đối tượng / ảnh."""
         project = await self._projects.get_entity(project_id)
         if fmt not in FORMATS[project.task]:
             raise BadRequestError(f"Định dạng {fmt.value} không dùng cho loại project này")
         classes = cls_cfg.load(project.classes)
-        labeled = await self._labeled(project_id)
+        labeled = await self._labeled(project_id, include_review)
         per_class, per_option = cls_cfg.usage(project.task, [im.annotations for im in labeled])
-        out = PlanOut(format=fmt, labeled=len(labeled), archs=ARCHS.get(fmt, []))
+        out = PlanOut(
+            format=fmt, labeled=len(labeled), archs=ARCHS.get(fmt, []),
+            in_review=await self._images.count(project_id=project_id, status=ImageStatus.IN_REVIEW),
+        )
         if project.task is TaskType.CLASSIFY:
             for c in classes:
                 options = [
@@ -102,9 +109,12 @@ class DatasetService:
         classes = cls_cfg.load(project.classes)
         if not classes:
             raise BadRequestError("Project chưa có lớp nào. Thêm lớp ở mục Lớp trước.")
-        labeled = await self._labeled(project_id)
+        labeled = await self._labeled(project_id, payload.include_review)
         if not labeled:
-            raise BadRequestError("Chưa có ảnh nào được duyệt để tạo dataset. Duyệt ảnh ở mục Cần review trước.")
+            raise BadRequestError(
+                "Chưa có ảnh nào đã duyệt hoặc chờ duyệt để tạo dataset." if payload.include_review
+                else "Chưa có ảnh nào được duyệt để tạo dataset. Duyệt ảnh ở mục Cần review, hoặc bật lấy cả ảnh chờ duyệt."
+            )
 
         # Kiểm hết trước khi đánh số phiên bản và ghi file.
         question = None
@@ -181,6 +191,8 @@ class DatasetService:
                 object_count=stats.objects,
                 background_count=stats.background,
                 skipped_count=stats.skipped,
+                include_review=payload.include_review,
+                review_count=sum(im.status is ImageStatus.IN_REVIEW for im in labeled),
                 format=fmt.value,
                 arch=arch,
                 class_names=json.dumps(names, ensure_ascii=False),

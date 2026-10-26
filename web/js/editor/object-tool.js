@@ -82,6 +82,23 @@ export class ObjectTool {
 
   getObjects(W, H) { return this.objects.map(o => scale(o, 1 / W, 1 / H, true)); }
 
+  /**
+   * Thêm đối tượng (toạ độ 0..1, VD kết quả tự gán nhãn). Bỏ cái trùng gần như khít một đối tượng
+   * cùng lớp đã có, để bấm tự gán nhãn hai lần không nhân đôi. Trả số đối tượng đã thêm.
+   */
+  addObjects(list, W, H) {
+    const iou = (a, b) => {
+      const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]), h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
+      if (w <= 0 || h <= 0) return 0;
+      const area = r => (r[2] - r[0]) * (r[3] - r[1]);
+      return (w * h) / (area(a) + area(b) - w * h);
+    };
+    const fresh = list.map(o => scale(o, W, H, false))
+      .filter(o => !this.objects.some(e => e.cls === o.cls && iou(bboxOf(e), bboxOf(o)) > 0.8));
+    this.objects.push(...fresh);
+    return fresh.length;
+  }
+
   validate() {
     if (this.pending) return 'Còn đối tượng đang vẽ dở: vẽ nốt, bấm Enter để kết thúc hoặc Esc để huỷ';
     const n = this.objects.filter(o => o.cls < 0).length;

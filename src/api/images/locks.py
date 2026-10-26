@@ -1,3 +1,4 @@
+
 """Giữ chỗ ảnh khi nhiều người cùng gán nhãn.
 
 Mỗi lần mở ảnh, người gán "giữ" nó trong LEASE phút và gia hạn định kỳ khi còn mở.
@@ -6,10 +7,12 @@ Người khác xin ảnh tiếp sẽ không nhận ảnh đang bị giữ. Hết
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi_modular.core.clock import utcnow
 from src.api.images.entities.image_model import ImageItem
+
+UTC = timezone.utc
 
 LEASE = timedelta(minutes=5)
 

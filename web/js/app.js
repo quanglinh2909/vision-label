@@ -2,7 +2,8 @@
 //   #/                                trang chọn / tạo project
 //   #/users                           quản lý thành viên (quản trị viên)
 //   #/drive                           kết nối Google Drive (quản trị viên)
-//   #/p/<pid>/<section>               upload | unlabeled | todo | review | rejected | labeled | assign | datasets | classes | settings
+//   #/gpu                             server GPU: thêm server, cài môi trường, các việc train (quản trị viên)
+//   #/p/<pid>/<section>               upload | unlabeled | todo | review | rejected | labeled | assign | datasets | models | test | classes | settings
 //   #/p/<pid>/label/<imageId>?queue=  trình gán nhãn
 // Chưa đăng nhập thì mọi đường dẫn đều hiện màn đăng nhập; đăng nhập xong quay lại đúng chỗ.
 
@@ -13,12 +14,15 @@ import { $, esc, h, ICONS, isAdmin, plate, session, TASKS, toast } from './ui.js
 import * as loginPage from './pages/login.js';
 import * as usersPage from './pages/users.js';
 import * as drivePage from './pages/drive.js';
+import * as gpuPage from './pages/gpu.js';
 import * as projectsPage from './pages/projects.js';
 import * as uploadPage from './pages/upload.js';
 import * as galleryPage from './pages/gallery.js';
 import * as reviewPage from './pages/review.js';
 import * as assignPage from './pages/assign.js';
 import * as datasetsPage from './pages/datasets.js';
+import * as modelsPage from './pages/models.js';
+import * as testPage from './pages/test.js';
 import * as classesPage from './pages/classes.js';
 import * as settingsPage from './pages/settings.js';
 import * as labelerPage from './pages/labeler.js';
@@ -33,6 +37,8 @@ const SECTIONS = {
   labeled: { page: galleryPage, label: 'Đã duyệt', count: p => p.labeled_count },
   assign: { page: assignPage, label: 'Phân công', role: 'admin', count: p => p.unassigned_count, countTitle: 'ảnh chưa giao' },
   datasets: { page: datasetsPage, label: 'Dataset', role: 'admin', count: p => p.dataset_count },
+  models: { page: modelsPage, label: 'Model AI', role: 'admin' },
+  test: { page: testPage, label: 'Kiểm tra model', role: 'admin' },
   classes: { page: classesPage, label: 'Lớp', role: 'admin', count: p => p.classes.length, countTitle: 'số lớp' },
   settings: { page: settingsPage, label: 'Cài đặt', role: 'admin' },
 };
@@ -153,6 +159,14 @@ async function route() {
       if (!isAdmin()) return navigate('#/');
       const instance = await mountFresh(seq, drivePage.mount(app, { query }));
       if (instance) current = { key: 'drive', instance };
+      return;
+    }
+    if (parts[0] === 'gpu') {
+      await unmountCurrent();
+      shell = null;
+      if (!isAdmin()) return navigate('#/');
+      const instance = await mountFresh(seq, gpuPage.mount(app));
+      if (instance) current = { key: 'gpu', instance };
       return;
     }
     if (parts[0] === 'users') {

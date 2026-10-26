@@ -162,7 +162,8 @@ class DriveService:
         await self._emit(item, by)
         # Context trống: task không được mang theo phiên database của request đang gọi (request xong là
         # phiên đó đóng; dùng tiếp sẽ giữ khoá ghi của SQLite). Mỗi lần ghi trong task tự commit.
-        task = asyncio.create_task(self._upload(dataset_id, by), context=contextvars.Context())
+        # (Chạy create_task bên trong Context trống thay cho tham số context=, vốn chỉ có từ Python 3.11.)
+        task = contextvars.Context().run(asyncio.create_task, self._upload(dataset_id, by))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return item

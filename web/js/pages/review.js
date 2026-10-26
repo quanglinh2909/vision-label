@@ -2,7 +2,7 @@
 // Trong mỗi tab: chọn một số ảnh (hoặc tất cả) để duyệt nhanh, hoặc mở review lần lượt.
 
 import { api } from '../api.js';
-import { imageTile, setBusy } from '../tiles.js';
+import { classFilter, filterQuery, imageTile, matchesFilter, readClassFilter, setBusy } from '../tiles.js';
 import { $, esc, h, openDialog, session, toast } from '../ui.js';
 
 export async function mount(el, ctx) {
@@ -15,8 +15,11 @@ export async function mount(el, ctx) {
     all.push(...res.items);
     if (all.length >= res.total || !res.items.length) break;
   }
+  // Lọc theo lớp / số đối tượng trước khi chia tab, để số trên tab khớp bộ lọc.
+  const clsF = readClassFilter(ctx.query);
+  const shown = clsF ? all.filter(img => matchesFilter(img, clsF)) : all;
   const byUser = new Map();
-  for (const img of all) {
+  for (const img of shown) {
     const who = img.assigned_to || img.labeled_by || '';
     if (!byUser.has(who)) byUser.set(who, []);
     byUser.get(who).push(img);
@@ -29,22 +32,25 @@ export async function mount(el, ctx) {
   const nameOf = who => (who === me ? 'Của bạn' : esc(who || 'Không rõ'));
   const wanted = ctx.query.assignee;
   const tab = wanted === '*' || byUser.has(wanted) ? wanted : (people[0]?.[0] ?? '*');
-  const imgs = tab === '*' ? all : byUser.get(tab) || [];
-  const tabHref = v => `#/p/${ctx.pid}/review?assignee=${encodeURIComponent(v)}`;
-  const q = `queue=review&assignee=${encodeURIComponent(tab)}`;
+  const imgs = tab === '*' ? shown : byUser.get(tab) || [];
+  const tabHref = (v, f = clsF) => `#/p/${ctx.pid}/review?assignee=${encodeURIComponent(v)}${filterQuery(f)}`;
+  const q = `queue=review&assignee=${encodeURIComponent(tab)}${filterQuery(clsF)}`;
 
   const page = h(`
     <div class="page list-page">
       <div class="listbar">
         <h2 title="Ảnh đã nộp, chờ duyệt. Chỉ ảnh được duyệt mới vào dataset. Mở một ảnh để sửa, duyệt hoặc trả lại kèm ghi chú.">Cần review</h2>
+        <span data-cls-filter></span>
         ${people.length ? `<div class="chips" role="tablist" aria-label="Người gán">
           ${people.map(([who, list]) => `<a role="tab" href="${tabHref(who)}" aria-selected="${who === tab}">${nameOf(who)}<span>${list.length}</span></a>`).join('')}
-          <a role="tab" href="${tabHref('*')}" aria-selected="${tab === '*'}">Tất cả<span>${all.length}</span></a>
+          <a role="tab" href="${tabHref('*')}" aria-selected="${tab === '*'}">Tất cả<span>${shown.length}</span></a>
         </div>
         <span class="spacer"></span>
         <label class="check" title="Bấm ô vuông ở góc ảnh để chọn từng ảnh. Giữ Shift / Ctrl và bấm ảnh để chọn nhanh, Shift để chọn cả dải.">
           <input type="checkbox" data-select-all> Chọn tất cả</label>
         <span class="muted picked" data-picked></span>
+        <button class="sm danger" data-del hidden title="Xoá hẳn các ảnh đang chọn khỏi project (mất cả nhãn)">Xoá</button>
+        <button class="sm danger" data-del-all title="Xoá hẳn mọi ảnh của tab đang xem khỏi project (mất cả nhãn)">Xoá tất cả</button>
         <button class="sm danger" data-reject disabled>Trả lại</button>
         <button class="sm" data-approve disabled>Duyệt</button>
         <a class="btn sm primary" href="#/p/${ctx.pid}/label/${imgs[0]?.id}?${q}">Review lần lượt</a>` : '<span class="muted">0 ảnh</span>'}
@@ -55,6 +61,13 @@ export async function mount(el, ctx) {
     </div>`);
 
   const grid = $('.grid', page);
+  const sel = classFilter(project, clsF, f => { location.hash = tabHref(tab, f); });
+  if (sel) $('[data-cls-filter]', page).replaceWith(sel);
+  if (!shown.length && clsF) {
+    grid.innerHTML = `<p class="empty">Không có ảnh chờ duyệt nào khớp bộ lọc (${all.length} ảnh chờ duyệt tất cả). Chọn <b>Mọi lớp</b> để xem hết.</p>`;
+    el.replaceChildren(page);
+    return { onLive(event, data, mine) { if (!mine && !['lock', 'unlock'].includes(data.kind)) ctx.reload(); } };
+  }
   if (!all.length) {
     grid.innerHTML = `<p class="empty">Không có ảnh nào chờ duyệt. Ảnh mới nộp sẽ tự hiện ở đây. Xem tiến độ từng người ở mục <a href="#/p/${ctx.pid}/assign">Phân công</a>.</p>`;
     el.replaceChildren(page);
@@ -76,6 +89,10 @@ export async function mount(el, ctx) {
     btn.textContent = picked.size ? `Duyệt ${picked.size} ảnh` : 'Duyệt';
     rejectBtn.disabled = !picked.size;
     rejectBtn.textContent = picked.size ? `Trả lại ${picked.size} ảnh` : 'Trả lại';
+    const del = $('[data-del]', page);
+    del.hidden = !picked.size;
+    del.textContent = `Xoá ${picked.size} ảnh`;
+    delete del.dataset.armed;
     $('[data-picked]', page).textContent = picked.size ? `Đã chọn ${picked.size} / ${imgs.length}` : `${imgs.length} ảnh`;
     selectAll.checked = picked.size === imgs.length;
     selectAll.indeterminate = picked.size > 0 && picked.size < imgs.length;
@@ -145,6 +162,45 @@ export async function mount(el, ctx) {
       if (!ok) return;
       await ctx.refreshProject();
       await mount(el, { ...ctx, query: { ...ctx.query, assignee: tab } });
+    });
+  });
+
+  /** Xoá hẳn ảnh (kèm nhãn, lịch sử, file) rồi dựng lại trang. Ảnh người khác đang mở được giữ lại. */
+  async function remove(ids) {
+    const r = await api.deleteImages(ctx.pid, ids);
+    toast(`Đã xoá ${r.deleted} ảnh${r.skipped ? `, bỏ qua ${r.skipped} ảnh đang có người mở` : ''}`, r.skipped ? 'warn' : 'ok');
+    await ctx.refreshProject();
+    await mount(el, { ...ctx, query: { ...ctx.query, assignee: tab } });
+  }
+
+  $('[data-del]', page).addEventListener('click', async e => {
+    const b = e.currentTarget;
+    if (!picked.size) return;
+    if (!b.dataset.armed) {
+      b.dataset.armed = '1'; b.textContent = `Bấm lần nữa để xoá ${picked.size} ảnh`;
+      setTimeout(() => { if (b.dataset.armed) sync(); }, 3000);
+      return;
+    }
+    b.disabled = true;
+    try { await remove([...picked]); } catch (err) { toast(err.message, 'err'); b.disabled = false; }
+  });
+
+  $('[data-del-all]', page).addEventListener('click', () => {
+    const scope = tab === '*' ? 'đang chờ duyệt' : `chờ duyệt ${tab === me ? 'của bạn' : `của ${esc(tab || 'người gán')}`}`;
+    openDialog(`
+        <h3>Xoá ${imgs.length} ảnh</h3>
+        <p>Xoá hẳn <b>${imgs.length} ảnh ${scope}</b> khỏi project, mất luôn nhãn đã gán và lịch sử. File ảnh trên đĩa bị xoá
+          theo, không hoàn tác được.</p>
+        <p class="muted small">Muốn người gán làm lại thì dùng <b>Trả lại</b> thay vì xoá. Ảnh đang có người khác mở được giữ lại.</p>
+        <label class="field">Gõ <b>${imgs.length}</b> để xác nhận <input type="text" name="confirm" required autocomplete="off" inputmode="numeric"></label>
+        <div class="row"><span class="spacer"></span><button type="button" data-cancel>Huỷ</button>
+          <button class="danger" type="submit">Xoá ${imgs.length} ảnh</button></div>`,
+      async form => {
+        if (form.confirm.value.trim() !== String(imgs.length)) throw new Error(`Gõ đúng ${imgs.length} để xác nhận`);
+        return true;
+      }).then(async ok => {
+      if (!ok) return;
+      try { await remove(imgs.map(i => i.id)); } catch (err) { toast(err.message, 'err'); }
     });
   });
 

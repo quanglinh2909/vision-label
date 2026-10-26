@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import File, Form, Path, Query, UploadFile, status
 from fastapi.responses import FileResponse
@@ -18,6 +18,7 @@ from src.api.images.dto.image_dto import (
     ApproveRequest,
     AssignRequest,
     ClaimRequest,
+    DeleteImagesRequest,
     ImageOut,
     ImageRef,
     LockRequest,
@@ -37,6 +38,12 @@ ImageId = Annotated[str, Path(description="ID của ảnh")]
 QueueParam = Annotated[Queue, Query(description="Danh sách: unlabeled | todo | review | rejected | labeled")]
 # Quản trị viên lọc theo người được giao (VD trang "Cần review" theo từng người).
 Assignee = Annotated[str | None, Query(description="Chỉ ảnh giao cho người này (quản trị viên)")]
+# Lọc theo lớp (project nhận diện): ảnh có đối tượng lớp này, hoặc chưa có (missing=true).
+ClassFilter = Annotated[int | None, Query(description="Id lớp: chỉ ảnh có đối tượng lớp này")]
+Missing = Annotated[bool, Query(description="true = ngược lại: chỉ ảnh CHƯA có đối tượng lớp `cls`")]
+# Lọc theo số đối tượng (của lớp `cls`, hoặc mọi lớp nếu không có `cls`).
+Count = Annotated[int | None, Query(ge=0, le=10_000, description="Số đối tượng, so theo `op`")]
+CountOp = Annotated[Literal["eq", "gte", "lte"], Query(description="eq: đúng bằng | gte: từ trở lên | lte: tới tối đa")]
 
 
 @controller(tags=["images"], guards=[Authenticated])
@@ -56,10 +63,12 @@ class ImageController:
         self,
         project_id: ProjectId,
         files: Annotated[list[UploadFile], File()],
+        # Mặc định "" chứ không phải None: Python 3.10 (get_type_hints trong fastapi_modular) bọc tham số
+        # `= None` thành Optional[...] và làm mất Form() -> FastAPI coi là query, nhãn gửi kèm bị bỏ qua.
         annotations: Annotated[
-            str | None,
+            str,
             Form(description='Nhập từ dataset có sẵn: JSON {"tên file": [đối tượng, ...]} theo định dạng nhãn của app'),
-        ] = None,
+        ] = "",
         approved: Annotated[bool, Form(description="Ảnh kèm nhãn vào thẳng Đã duyệt thay vì Cần review")] = False,
     ) -> UploadResult:
         self._service.ensure_files(files)
@@ -80,9 +89,14 @@ class ImageController:
         assignee: Assignee = None,
         limit: Annotated[int, Query(ge=1, le=500)] = 100,
         offset: Annotated[int, Query(ge=0)] = 0,
+        cls: ClassFilter = None,
+        missing: Missing = False,
+        count: Count = None,
+        op: CountOp = "eq",
     ) -> Page[ImageOut]:
         items, total = await self._service.list_images(
-            project_id, queue, caller(), assignee=assignee, limit=limit, offset=offset
+            project_id, queue, caller(), assignee=assignee, limit=limit, offset=offset,
+            cls=cls, missing=missing, count=count, op=op,
         )
         return Page(items=[ImageOut.build(i) for i in items], total=total, limit=limit, offset=offset)
 
@@ -91,8 +105,11 @@ class ImageController:
         response_model=list[ImageRef],
         summary="Toàn bộ id + tên ảnh của một danh sách, để duyệt tuần tự",
     )
-    async def list_refs(self, project_id: ProjectId, queue: QueueParam, assignee: Assignee = None) -> list[ImageRef]:
-        rows = await self._service.list_refs(project_id, queue, caller(), assignee)
+    async def list_refs(
+        self, project_id: ProjectId, queue: QueueParam, assignee: Assignee = None, cls: ClassFilter = None,
+        missing: Missing = False, count: Count = None, op: CountOp = "eq",
+    ) -> list[ImageRef]:
+        rows = await self._service.list_refs(project_id, queue, caller(), assignee, cls=cls, missing=missing, count=count, op=op)
         return [ImageRef.model_validate(i) for i in rows]
 
     @post(
@@ -177,6 +194,19 @@ class ImageController:
     @delete("/images/{image_id}/annotations", response_model=ImageOut, summary="Đưa về chưa gán nhãn")
     async def clear_annotations(self, image_id: ImageId) -> ImageOut:
         return ImageOut.build(await self._service.clear_annotations(image_id, caller()))
+
+    @post(
+        "/projects/{project_id}/images/delete",
+        response_model=dict[str, int],
+        guards=[AdminOnly],
+        summary="Xoá nhiều ảnh (theo danh sách id, hoặc cả danh sách chưa gán nhãn)",
+    )
+    async def delete_many(self, project_id: ProjectId, payload: DeleteImagesRequest) -> dict[str, int]:
+        if payload.all:
+            done, skipped = await self._service.delete_queue(project_id, Queue(payload.queue), payload.assignee, caller())
+        else:
+            done, skipped = await self._service.delete_many(project_id, payload.ids, caller())
+        return {"deleted": done, "skipped": skipped}
 
     @delete("/images/{image_id}", status_code=status.HTTP_204_NO_CONTENT, guards=[AdminOnly], summary="Xoá ảnh")
     async def delete_image(self, image_id: ImageId) -> None:

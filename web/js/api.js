@@ -59,8 +59,9 @@ export const api = {
     return req('POST', `/projects/${pid}/images`, fd);
   },
   // queue: unlabeled | todo | review | labeled. assignee: chỉ ảnh giao cho người này (quản trị viên).
-  images: (pid, { queue, assignee, limit = 100, offset = 0 } = {}) => req('GET', `/projects/${pid}/images${qs({ queue, assignee, limit, offset })}`),
-  refs: (pid, queue, assignee) => req('GET', `/projects/${pid}/image-refs${qs({ queue, assignee })}`),
+  // Bộ lọc (xem filterParams ở tiles.js): cls / missing = có (chưa có) lớp đó; count + op = số đối tượng.
+  images: (pid, { queue, assignee, limit = 100, offset = 0, ...filter } = {}) => req('GET', `/projects/${pid}/images${qs({ queue, assignee, limit, offset, ...filter })}`),
+  refs: (pid, queue, assignee, filter = {}) => req('GET', `/projects/${pid}/image-refs${qs({ queue, assignee, ...filter })}`),
   assignments: pid => req('GET', `/projects/${pid}/assignments`),
   assign: (pid, username, count) => req('POST', `/projects/${pid}/assignments`, { username, count }),
   revoke: (pid, username, scope = 'unlabeled') => req('POST', `/projects/${pid}/assignments/revoke`, { username, scope }),
@@ -78,11 +79,14 @@ export const api = {
   saveAnnotations: (id, objects, approve = false) => req('PUT', `/images/${id}/annotations`, { objects, approve }),
   clearAnnotations: id => req('DELETE', `/images/${id}/annotations`),
   deleteImage: id => req('DELETE', `/images/${id}`),
+  deleteImages: (pid, ids) => req('POST', `/projects/${pid}/images/delete`, { ids }),
+  /** Xoá cả danh sách chưa gán nhãn; assignee như khi xem ('' = chưa giao, undefined = mọi người). */
+  deleteAllUnlabeled: (pid, assignee) => req('POST', `/projects/${pid}/images/delete`, { all: true, queue: 'unlabeled', assignee }),
   fileUrl: id => `/api/images/${id}/file`,
   thumbUrl: id => `/api/images/${id}/thumb`,
 
   datasets: pid => req('GET', `/projects/${pid}/datasets`),
-  datasetPlan: (pid, format) => req('GET', `/projects/${pid}/datasets/plan${qs({ format })}`),
+  datasetPlan: (pid, format, includeReview = false) => req('GET', `/projects/${pid}/datasets/plan${qs({ format, include_review: includeReview || undefined })}`),
   createDataset: (pid, body) => req('POST', `/projects/${pid}/datasets`, body),
   deleteDataset: id => req('DELETE', `/datasets/${id}`),
   drive: () => req('GET', '/drive'),
@@ -108,6 +112,63 @@ export const api = {
     }
     return new Blob(parts, { type: 'application/zip' });
   },
+  gpuServers: () => req('GET', '/gpu/servers'),
+  createGpuServer: body => req('POST', '/gpu/servers', body),
+  updateGpuServer: (id, body) => req('PATCH', `/gpu/servers/${id}`, body),
+  deleteGpuServer: id => req('DELETE', `/gpu/servers/${id}`),
+  testGpuServer: id => req('POST', `/gpu/servers/${id}/test`),
+  setupGpuServer: (id, locate) => req('POST', `/gpu/servers/${id}/setup`, { locate }),
+  releaseGpuServer: id => req('POST', `/gpu/servers/${id}/release`),
+  gpuJobs: projectId => req('GET', `/gpu/jobs${qs({ project_id: projectId })}`),
+  /** Một việc, kèm lịch sử chỉ số theo từng epoch. */
+  gpuJob: id => req('GET', `/gpu/jobs/${id}`),
+  /** Link tải best.pt của một lần train (server lấy file từ máy GPU rồi gửi về). */
+  jobWeightsUrl: id => `/api/gpu/jobs/${id}/weights`,
+  saveModel: (jobId, body) => req('POST', `/gpu/jobs/${jobId}/save`, body),
+  models: pid => req('GET', `/projects/${pid}/models`),
+  updateModel: (id, body) => req('PATCH', `/gpu/models/${id}`, body),
+  deleteModel: id => req('DELETE', `/gpu/models/${id}`),
+  modelFileUrl: id => `/api/gpu/models/${id}/file`,
+  deployModel: (id, serverId) => req('POST', `/gpu/models/${id}/deploy`, { server_id: serverId }),
+  /** Kiểm tra model với một ảnh: fd có file, server_id, engine, model, conf, iou, imgsz, prompts. */
+  testImage: fd => req('POST', '/gpu/test/image', fd),
+  /** Gửi video lên server GPU, báo tiến độ (XHR vì fetch chưa báo được tiến độ upload). Trả {source}. */
+  testVideo(fd, onProgress) {
+    return new Promise((resolve, reject) => {
+      const x = new XMLHttpRequest();
+      x.open('POST', '/api/gpu/test/video');
+      x.upload.onprogress = e => e.lengthComputable && onProgress?.(e.loaded / e.total);
+      x.onload = () => {
+        let j = null;
+        try { j = JSON.parse(x.responseText); } catch { /* không phải JSON */ }
+        if (x.status >= 200 && x.status < 300) resolve(j);
+        else reject(Object.assign(new Error(j?.message || `${x.status} ${x.statusText}`), { status: x.status }));
+      };
+      x.onerror = () => reject(new Error('Mất kết nối khi gửi video'));
+      x.send(fd);
+    });
+  },
+  /** Server GPU tự tải video từ link http(s); trả {source} như khi gửi file. */
+  testVideoUrl: (serverId, url) => req('POST', '/gpu/test/video-url', { server_id: serverId, url }),
+  testVideos: serverId => req('GET', `/gpu/test/videos${qs({ server_id: serverId })}`),
+  testDeleteVideo: (serverId, path) => req('POST', '/gpu/test/videos/delete', { server_id: serverId, path }),
+  testStreamUrl: params => `/api/gpu/test/stream${qs(params)}`,
+  testStats: session => req('GET', `/gpu/test/stats${qs({ session })}`),
+  testShots: (session, after = 0) => req('GET', `/gpu/test/shots${qs({ session, after })}`),
+  testShotUrl: (session, id, kind = 'thumb') => `/api/gpu/test/shot${qs({ session, id, kind: kind === 'thumb' ? undefined : kind })}`,
+  testImport: body => req('POST', '/gpu/test/import', body),
+  testStop: session => req('POST', `/gpu/test/stop${qs({ session })}`),
+  useModel: (id, serverId) => req('POST', `/gpu/models/${id}/use`, { server_id: serverId }),
+  stopGpuJob: id => req('POST', `/gpu/jobs/${id}/stop`),
+  deleteGpuJob: id => req('DELETE', `/gpu/jobs/${id}`),
+  train: (pid, body) => req('POST', `/projects/${pid}/train`, body),
+  autolabelConfig: pid => req('GET', `/projects/${pid}/autolabel`),
+  saveAutolabel: (pid, body) => req('PUT', `/projects/${pid}/autolabel`, body),
+  warmupAutolabel: pid => req('POST', `/projects/${pid}/autolabel/warmup`),
+  unloadAutolabel: pid => req('POST', `/projects/${pid}/autolabel/unload`),
+  autolabelAvailable: pid => req('GET', `/projects/${pid}/autolabel/available`),
+  /** Chạy model cho một ảnh; kết quả chưa được lưu. */
+  autolabel: id => req('POST', `/images/${id}/autolabel`),
   /** Link tải kèm key: dùng được cả khi không đăng nhập (curl, Colab). */
   downloadUrl: d => `/api/datasets/${d.id}/download?key=${encodeURIComponent(d.download_key)}`,
 };

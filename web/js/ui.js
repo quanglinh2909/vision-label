@@ -58,6 +58,8 @@ export const ICONS = {
   datasets: svg('<path d="M10 3l7 3.5-7 3.5-7-3.5z"/><path d="M3 10l7 3.5 7-3.5M3 13.5L10 17l7-3.5"/>'),
   classes: svg('<path d="M3 4h6.5l7.5 7.5-5 5L4.5 9H3z"/><circle cx="6.5" cy="7.5" r="1.2"/>'),
   settings: svg('<path d="M4 6h8M15 6h1M4 14h1M8 14h8"/><circle cx="13.5" cy="6" r="1.6"/><circle cx="6.5" cy="14" r="1.6"/>'),
+  test: svg('<rect x="2.5" y="4" width="15" height="11" rx="1.5"/><path d="M8 8l4.5 2-4.5 2z"/><path d="M6 18h8"/>'),
+  models: svg('<rect x="5" y="5" width="10" height="10" rx="1.5"/><path d="M8 8h4v4H8zM8 2.5V5M12 2.5V5M8 15v2.5M12 15v2.5M2.5 8H5M2.5 12H5M15 8h2.5M15 12h2.5"/>'),
   drop: `<svg viewBox="0 0 64 44" aria-hidden="true"><rect x="6" y="8" width="52" height="28" rx="4" fill="none" stroke="currentColor" stroke-width="2.5" stroke-dasharray="5 4"/><path d="M32 30V15M26 20l6-6 6 6" fill="none" stroke="#f2c230" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
 };
 

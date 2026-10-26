@@ -4,7 +4,7 @@ import { api } from '../api.js';
 import { ClassifyTool } from '../editor/classify-tool.js';
 import { Editor } from '../editor/editor.js';
 import { ObjectTool } from '../editor/object-tool.js';
-import { STATUS } from '../tiles.js';
+import { filterParams, filterQuery, readClassFilter, STATUS } from '../tiles.js';
 import { $, classColor, clsLabel, esc, fmtDate, h, isAdmin, openDialog, session, SHAPES, toast, UNKNOWN, UNKNOWN_LABEL } from '../ui.js';
 
 /** "Ctrl+S" -> keycap Ctrl + keycap S; "mouse:Kéo chuột" -> chữ thao tác chuột; "…" -> dải phím. */
@@ -21,8 +21,9 @@ function shortcutsHtml(help) {
   const groups = [
     ['Vẽ và chỉnh', help.draw],
     ['Chuyển ảnh', [
-      ['Lưu và sang ảnh tiếp', help.next],
-      ['Ảnh trước', help.prev],
+      [help.nextLabel, help.next],
+      ['Ảnh sau (chỉ xem, không duyệt)', help.browse],
+      ['Ảnh trước (chỉ xem, không duyệt)', help.prev],
       ['Lưu', ['Ctrl+S']],
       ['Hoàn tác', ['Ctrl+Z']],
     ]],
@@ -54,7 +55,9 @@ export async function mount(el, ctx) {
   // Giữ nguyên để nút quay lại về đúng tab; chỉ lọc API khi là tên một người.
   const fromTab = ctx.query.assignee ?? '';
   const assignee = fromTab === '*' ? '' : fromTab;
-  const backHref = `#/p/${ctx.pid}/${queue}${fromTab ? `?assignee=${encodeURIComponent(fromTab)}` : ''}`;
+  // Bộ lọc lớp của danh sách đã mở ảnh này: đi lần lượt trong đúng các ảnh khớp bộ lọc, quay lại giữ bộ lọc.
+  const clsF = readClassFilter(ctx.query);
+  const backHref = `#/p/${ctx.pid}/${queue}?${fromTab ? `assignee=${encodeURIComponent(fromTab)}` : ''}${filterQuery(clsF)}`;
   // Lưu luôn đưa ảnh vào "chờ duyệt". Chỉ trong "Cần review", quản trị viên có nút Duyệt / Trả lại.
   const reviewMode = admin && queue === 'review';
   const BACK = { unlabeled: 'Chưa gán nhãn', todo: 'Việc của tôi', review: admin ? 'Cần review' : 'Chờ duyệt', rejected: 'Bị trả lại', labeled: 'Đã duyệt' };
@@ -67,10 +70,20 @@ export async function mount(el, ctx) {
   const tool = classify ? new ClassifyTool(project.classes) : new ObjectTool(project.classes);
   // A / D chuyển ảnh — trừ khi có lớp tên "a" hoặc "d" (gõ tên lớp một ký tự để gán lớp).
   const letterNav = !project.classes.some(c => ['a', 'd'].includes(c.name.toLowerCase()));
-  const help = { ...tool.help, next: letterNav ? ['D', '→', 'Enter'] : ['→', 'Enter'], prev: letterNav ? ['A', '←'] : ['←'] };
+  // D / Enter = lưu (Cần review: duyệt) rồi sang ảnh tiếp. Mũi tên chỉ để lướt xem: không lưu, không duyệt
+  // (có sửa dở thì vẫn lưu phần sửa, ảnh ở nguyên chờ duyệt, để không mất công sửa).
+  const help = {
+    ...tool.help,
+    nextLabel: reviewMode ? 'Duyệt và sang ảnh tiếp' : 'Lưu và sang ảnh tiếp',
+    next: letterNav ? ['D', 'Enter'] : ['Enter'],
+    browse: ['→'],
+    prev: letterNav ? ['A', '←'] : ['←'],
+  };
   // Bảng lớp: chữ to dạng lưới khi mọi tên lớp rất ngắn (bộ ký tự), danh sách khi tên dài.
   const widePalette = project.classes.some(c => c.name.length > 2);
   const unit = n => (classify ? `${n} câu đã trả lời` : `${n} đối tượng`);
+  // Tự gán nhãn bằng model trên server GPU (cấu hình ở mục Model AI). Chỉ project nhận diện đối tượng.
+  const autoCfg = classify ? null : await api.autolabelAvailable(ctx.pid).catch(() => null);
 
   const page = h(`
     <div class="labeler">
@@ -82,13 +95,16 @@ export async function mount(el, ctx) {
         <span class="muted who-line" data-who></span>
         <span class="savestate" data-save></span>
         <span class="spacer"></span>
+        <button class="sm" data-act="auto" ${autoCfg?.enabled ? '' : 'hidden'}
+          title="Chạy model trên server ${esc(autoCfg?.server_name || 'GPU')} và thêm các đối tượng tìm được (chưa lưu, xem lại rồi lưu)">Tự gán nhãn</button>
         <button class="sm ghost" data-act="clear" title="Đưa ảnh về danh sách chưa gán nhãn">Bỏ nhãn</button>
         <button class="sm ghost" data-act="fit" title="Ctrl+0">Vừa khung</button>
         <button class="sm ghost" data-act="hide" title="Phím \\" ${classify ? 'hidden' : ''}>Ẩn nhãn</button>
-        <button class="sm" data-act="prev" title="Phím ←">Ảnh trước</button>
+        <button class="sm" data-act="prev" title="Phím ←. Chỉ chuyển ảnh, không duyệt">Ảnh trước</button>
+        <button class="sm" data-act="skip" title="Phím →. Chỉ chuyển ảnh, không duyệt">Ảnh sau</button>
         ${reviewMode ? '<button class="sm danger" data-act="reject" title="Trả ảnh lại cho người gán kèm ghi chú">Trả lại</button>' : ''}
         <button class="sm" data-act="save" title="${reviewMode ? 'Ctrl+S. Lưu nhãn hiện tại và duyệt' : 'Ctrl+S. Lưu xong ảnh vào mục Cần review chờ duyệt'}">${reviewMode ? 'Duyệt' : 'Lưu'}</button>
-        <button class="sm primary" data-act="next" title="${letterNav ? 'Phím D, → hoặc Enter' : 'Phím → hoặc Enter'}">${primary}</button>
+        <button class="sm primary" data-act="next" title="${letterNav ? 'Phím D hoặc Enter' : 'Phím Enter'}">${primary}</button>
       </div>
       <div class="noticebar" data-notice hidden></div>
       <div class="lockbar" data-lockbar hidden>
@@ -167,13 +183,14 @@ export async function mount(el, ctx) {
   // Ảnh đang mở luôn được giữ chỗ (lock) và gia hạn định kỳ; người khác mở sẽ ở chế độ chỉ xem.
   // "Tự phát ảnh" (claim-next) cho danh sách cần gán; các danh sách khác duyệt theo thứ tự cố định.
   const reviewing = queue === 'review' || queue === 'rejected' || queue === 'labeled';
-  const list = reviewing ? (await api.refs(ctx.pid, queue, assignee || undefined)).map(r => r.id) : [];
+  const list = reviewing ? (await api.refs(ctx.pid, queue, assignee || undefined, filterParams(clsF))).map(r => r.id) : [];
   let idx = -1;
   let image = null;
   let readOnly = false; // không lưu được: người khác đang giữ, hoặc ảnh đã duyệt (người gán)
   let frozen = false; // ảnh đã duyệt, người gán chỉ xem
   let busy = false;
   let alive = true; // false khi đã rời trang: thao tác tải dở phải dừng và trả chỗ
+  let autoBusy = false; // đang chờ server GPU tự gán nhãn (không chặn chuyển ảnh)
   // Quản trị viên tự gán: ảnh chưa giao cho ai. Người gán: ảnh được giao chưa làm + bị trả lại.
   const remainingOf = p => (admin ? p.unassigned_count : p.unlabeled_count + p.rejected_count);
   let remaining = remainingOf(project);
@@ -252,6 +269,9 @@ export async function mount(el, ctx) {
       $('[data-act=takeover]', page).hidden = frozen;
     }
     $('[data-act=save]', page).disabled = readOnly;
+    const autoBtn = $('[data-act=auto]', page);
+    autoBtn.disabled = readOnly || autoBusy;
+    autoBtn.textContent = autoBusy ? 'Đang tự gán nhãn…' : 'Tự gán nhãn';
     $('[data-act=reject]', page)?.toggleAttribute('disabled', readOnly || image.status !== 'in_review');
     // Ghi chú khi bị trả lại: người gán cần biết phải sửa gì; quản trị viên thấy để đối chiếu.
     const note = $('[data-notice]', page);
@@ -324,10 +344,13 @@ export async function mount(el, ctx) {
     renderBar();
     renderSide();
     renderHistory();
+    if (autoCfg?.on_open && !readOnly && image.status === 'unlabeled' && !image.annotations.length) autoLabel();
+    // Cần review: ảnh đã có nhãn, chỉ thêm cái còn thiếu; không có gì mới thì im lặng (khỏi báo mỗi ảnh).
+    else if (autoCfg?.on_open_review && reviewMode && !readOnly && image.status === 'in_review') autoLabel({ quietIfNone: true });
     // Chỉ ghi lại đường dẫn khi người dùng vẫn đang ở trình gán nhãn (ảnh tải xong sau khi họ
     // đã bấm quay lại thì không được kéo họ về trang ảnh).
     if (location.hash.startsWith(`#/p/${ctx.pid}/label/`)) {
-      history.replaceState(null, '', `#/p/${ctx.pid}/label/${id}?queue=${queue}${fromTab ? `&assignee=${encodeURIComponent(fromTab)}` : ''}`);
+      history.replaceState(null, '', `#/p/${ctx.pid}/label/${id}?queue=${queue}${fromTab ? `&assignee=${encodeURIComponent(fromTab)}` : ''}${filterQuery(clsF)}`);
     }
     // Danh sách gốc dùng để nháy viền ảnh vừa xem khi quay lại.
     try { sessionStorage.setItem('last-image', id); } catch { }
@@ -335,7 +358,8 @@ export async function mount(el, ctx) {
     if (nxt) new Image().src = api.fileUrl(nxt);
   }
 
-  async function save({ quiet = false } = {}) {
+  /** approve: duyệt luôn (chỉ nút Duyệt / D trong Cần review). Lưu khi chuyển ảnh bằng mũi tên thì không duyệt. */
+  async function save({ quiet = false, approve = reviewMode } = {}) {
     if (!image) return true;
     if (readOnly) {
       toast(frozen ? 'Ảnh đã được duyệt, không sửa được nữa.' : `Ảnh đang được ${image.locked_by || 'người khác'} mở. Bấm "Giành quyền sửa" nếu muốn sửa.`, 'warn');
@@ -344,7 +368,7 @@ export async function mount(el, ctx) {
     const err = editor.tool.validate();
     if (err) { toast(err, 'warn'); return false; }
     try {
-      image = await api.saveAnnotations(image.id, editor.getObjects(), reviewMode);
+      image = await api.saveAnnotations(image.id, editor.getObjects(), approve);
       editor.dirty = false;
       // Lưu xong server đã trả chỗ; giữ lại vì người gán có thể còn sửa tiếp ảnh này.
       api.lock(image.id).catch(() => { });
@@ -354,7 +378,7 @@ export async function mount(el, ctx) {
       if (!quiet) {
         const st = $('[data-save]', page);
         st.className = 'savestate ok';
-        st.textContent = `${reviewMode ? 'Đã duyệt' : 'Đã lưu, chờ duyệt'}: ${unit(image.object_count)}`;
+        st.textContent = `${approve ? 'Đã duyệt' : 'Đã lưu, chờ duyệt'}: ${unit(image.object_count)}`;
       }
       ctx.refreshProject().then(p => {
         if (p && !reviewing) { remaining = remainingOf(p); renderBar(); }
@@ -367,9 +391,35 @@ export async function mount(el, ctx) {
     }
   }
 
-  async function next({ saveFirst }) {
+  /** Chạy model cho ảnh đang mở rồi thêm kết quả vào (chưa lưu). Chuyển ảnh khi đang chờ thì bỏ kết quả. */
+  async function autoLabel({ quietIfNone = false } = {}) {
+    if (!autoCfg?.enabled || autoBusy || !image || readOnly) return;
+    const id = image.id;
+    autoBusy = true;
+    renderBar();
+    try {
+      const r = await api.autolabel(id);
+      if (!alive || image?.id !== id || readOnly) return;
+      editor.pushHistory(); // Ctrl+Z bỏ cả lượt tự gán nhãn
+      const n = editor.tool.addObjects(r.objects, editor.W, editor.H);
+      if (n) editor.markDirty();
+      else editor.history.pop();
+      if (!n && quietIfNone) return;
+      toast(n ? `Tự gán nhãn: thêm ${n} đối tượng (${r.seconds.toFixed(1)} giây). Xem lại rồi lưu.`
+        : r.found ? 'Model không tìm thấy đối tượng mới nào thuộc các lớp đã bật.' : 'Model không tìm thấy đối tượng nào.',
+      n ? 'ok' : 'warn', 5000);
+      r.notes.forEach(note => toast(note, 'warn', 7000));
+    } catch (e) {
+      if (alive && image?.id === id) toast(`Tự gán nhãn lỗi: ${e.message}`, 'err', 9000);
+    } finally {
+      autoBusy = false;
+      if (alive && image) renderBar();
+    }
+  }
+
+  async function next({ saveFirst, approve = false }) {
     // "Tiếp" luôn lưu (khi được sửa): ảnh không có gì vẫn được xác nhận là ảnh nền.
-    if (!readOnly && (saveFirst || editor.dirty) && !(await save({ quiet: true }))) return;
+    if (!readOnly && (saveFirst || editor.dirty) && !(await save({ quiet: true, approve }))) return;
     if (idx + 1 < list.length) return open(list[idx + 1]);
     if (reviewing) return toast('Đây là ảnh cuối cùng', 'warn');
     const img = await api.claimNext(ctx.pid, list);
@@ -382,7 +432,7 @@ export async function mount(el, ctx) {
   }
 
   async function prev() {
-    if (!readOnly && editor.dirty && !(await save({ quiet: true }))) return;
+    if (!readOnly && editor.dirty && !(await save({ quiet: true, approve: false }))) return;
     if (idx <= 0) return toast(reviewing ? 'Đây là ảnh đầu tiên' : 'Đây là ảnh đầu tiên trong phiên', 'warn');
     await open(list[idx - 1]);
   }
@@ -396,9 +446,10 @@ export async function mount(el, ctx) {
 
   const actions = {
     prev: guard(prev),
-    next: guard(() => next({ saveFirst: saveOnNext })),
-    skip: guard(() => next({ saveFirst: false })),
+    next: guard(() => next({ saveFirst: saveOnNext, approve: reviewMode })),
+    skip: guard(() => next({ saveFirst: false })), // mũi tên phải / "Ảnh sau": chỉ lướt, không duyệt
     save: () => save(),
+    auto: () => autoLabel(),
     fit: () => editor.fit(),
     hide: () => editor.toggleLabels(),
     takeover: guard(async () => {
@@ -453,7 +504,8 @@ export async function mount(el, ctx) {
     if (!mod && !e.altKey) {
       // Enter khi đang vẽ dở đa giác / pose: chốt đối tượng, không chuyển ảnh.
       if (k === 'enter' && editor.tool.finishPending?.()) { e.preventDefault(); return; }
-      if (k === 'arrowright' || k === 'enter' || (letterNav && k === 'd')) { e.preventDefault(); actions.next(); return; }
+      if (k === 'enter' || (letterNav && k === 'd')) { e.preventDefault(); actions.next(); return; }
+      if (k === 'arrowright') { e.preventDefault(); actions.skip(); return; }
       if (k === 'arrowleft' || (letterNav && k === 'a')) { e.preventDefault(); actions.prev(); return; }
     }
     if (e.repeat && k !== 'arrowright' && k !== 'arrowleft') return;
@@ -537,13 +589,13 @@ export async function mount(el, ctx) {
     onLive,
     update: guard(async id => {
       if (!id || id === image?.id) return;
-      if (!readOnly && editor.dirty && !(await save({ quiet: true }))) return;
+      if (!readOnly && editor.dirty && !(await save({ quiet: true, approve: false }))) return;
       await open(id);
     }),
     async unmount() {
       alive = false;
       // Rời trang khi còn thay đổi -> tự lưu (nếu hợp lệ), rồi trả chỗ.
-      if (!readOnly && editor.dirty && !editor.tool.validate()) await save({ quiet: true });
+      if (!readOnly && editor.dirty && !editor.tool.validate()) await save({ quiet: true, approve: false });
       release();
       teardown();
     },

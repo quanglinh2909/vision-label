@@ -12,3 +12,5 @@ pillow>=10.0
 colorama>=0.4; sys_platform == "win32"
 # Máy chủ WebSocket cho uvicorn (kênh realtime /ws/live).
 websockets>=12
+# SSH tới server GPU (tự gán nhãn, train).
+paramiko>=3.4

@@ -3,6 +3,7 @@
     storage/projects/<project_id>/images/<image_id>.<ext>   ảnh gốc
     storage/projects/<project_id>/thumbs/<image_id>.jpg     ảnh thu nhỏ
     dataset/<project-slug>/v<n>/                            dataset đã xuất
+    storage/models/<model_id>.pt                            model train xong đã lưu
 """
 
 from __future__ import annotations
@@ -42,6 +43,10 @@ class Storage:
 
     def dataset_dir(self, project_name: str, project_id: str, version: int) -> Path:
         return self._datasets / slugify(project_name, project_id[:8]) / f"v{version}"
+
+    def model_path(self, model_id: str) -> Path:
+        """Model đã lưu (xem module gpu). Không nằm trong thư mục project: xoá project vẫn giữ model."""
+        return self._root / "models" / f"{model_id}.pt"
 
     def remove_project_files(self, project_id: str) -> None:
         shutil.rmtree(self.project_dir(project_id), ignore_errors=True)

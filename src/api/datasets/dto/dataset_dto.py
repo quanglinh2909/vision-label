@@ -26,6 +26,9 @@ class DatasetCreate(InputSchema):
     question: int | None = Field(default=None, description="Id lớp (câu hỏi) cần xuất")
     # True: "Không rõ" thành một lớp riêng. False: ảnh "Không rõ" bị bỏ khỏi dataset.
     include_unknown: bool = False
+    # --- chung
+    # Lấy cả ảnh đang chờ duyệt (Cần review), không chỉ ảnh đã duyệt. Nhãn của chúng chưa được xác nhận.
+    include_review: bool = False
     arch: str = Field(default="", description="Biến thể model, VD mobilenet_v3_small, resnet50")
 
 
@@ -53,7 +56,8 @@ class QuestionPlanOut(OutputSchema):
 
 class PlanOut(OutputSchema):
     format: ExportFormat
-    labeled: int = Field(description="Số ảnh đã duyệt")
+    labeled: int = Field(description="Số ảnh sẽ được xét (đã duyệt, cộng chờ duyệt nếu include_review)")
+    in_review: int = Field(0, description="Số ảnh đang chờ duyệt trong project")
     classes: list[ClassPlanOut] = Field(default_factory=list)
     pose_k: int | None = Field(default=None, description="YOLO pose: số điểm dùng chung")
     pose_from: str = ""
@@ -73,6 +77,8 @@ class DatasetOut(OutputSchema):
     class_names: list[str]
     val_ratio: float
     include_background: bool
+    include_review: bool = False
+    review_count: int = 0
     train_count: int
     val_count: int
     object_count: int
@@ -91,4 +97,6 @@ class DatasetOut(OutputSchema):
     @classmethod
     def build(cls, item: DatasetVersion, download_key: str) -> DatasetOut:
         data = {k: getattr(item, k) for k in cls.model_fields if k not in ("class_names", "download_key")}
+        # Phiên bản tạo trước khi có cột này mang NULL dưới database.
+        data["include_review"], data["review_count"] = bool(item.include_review), item.review_count or 0
         return cls(**data, class_names=json.loads(item.class_names or "[]"), download_key=download_key)

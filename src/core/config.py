@@ -53,9 +53,22 @@ class DriveSettings(BaseModel):
     upload_url: str = "https://www.googleapis.com/upload/drive/v3"
 
 
+class GpuSettings(BaseModel):
+    """Server GPU -> APP_GPU__POLL_SECONDS, APP_GPU__INFER_TIMEOUT, APP_GPU__AGENT_IDLE_MINUTES."""
+
+    # Mỗi bao nhiêu giây hỏi server một lần về tiến độ train / cài đặt.
+    poll_seconds: int = 3
+    # Chờ tối đa bao nhiêu giây cho một lần tự gán nhãn. Lần đầu có thể lâu vì phải nạp
+    # (hoặc tải) model lên GPU.
+    infer_timeout: int = 900
+    # Agent trên server giữ model trong GPU; không ai dùng trong chừng này phút thì tự tắt, trả GPU.
+    agent_idle_minutes: int = 30
+
+
 class AppSettings(Settings):
     """Settings của khung, cộng thêm phần của ứng dụng."""
 
     storage: StorageSettings = Field(default_factory=StorageSettings, alias="APP_STORAGE")
     auth: AuthSettings = Field(default_factory=AuthSettings, alias="APP_AUTH")
     drive: DriveSettings = Field(default_factory=DriveSettings, alias="APP_DRIVE")
+    gpu: GpuSettings = Field(default_factory=GpuSettings, alias="APP_GPU")

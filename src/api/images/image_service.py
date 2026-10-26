@@ -50,6 +50,20 @@ def _write_image(data: bytes, original: Path, thumb: Path, thumb_size: int) -> t
     return width, height
 
 
+def matches_filter(objects: list[dict], cls: int | None, missing: bool, count: int | None, op: str) -> bool:
+    """Bộ lọc lưới ảnh (giống matchesFilter trong web/js/tiles.js).
+
+    Đếm đối tượng của lớp `cls` (None = mọi lớp). `missing` = ảnh chưa có đối tượng nào của lớp đó.
+    `count` + `op` (eq | gte | lte) = so số đối tượng đếm được; không có `count` thì chỉ cần có ít nhất một.
+    """
+    n = sum(1 for o in objects if cls is None or o.get("cls") == cls)
+    if missing:
+        return n == 0
+    if count is None:
+        return n > 0
+    return n == count if op == "eq" else n >= count if op == "gte" else n <= count
+
+
 class Queue(str, Enum):
     """Các danh sách ảnh. Người gán nhãn chỉ thấy ảnh được giao cho mình."""
 
@@ -218,14 +232,29 @@ class ImageService:
         return q
 
     async def list_images(
-        self, project_id: str, queue: Queue, who: Caller, *, assignee: str | None, limit: int, offset: int
+        self, project_id: str, queue: Queue, who: Caller, *, assignee: str | None, limit: int, offset: int,
+        cls: int | None = None, missing: bool = False, count: int | None = None, op: str = "eq",
     ) -> tuple[list[ImageItem], int]:
+        if cls is not None or count is not None:
+            rows = await self.list_refs(project_id, queue, who, assignee, cls=cls, missing=missing, count=count, op=op)
+            return rows[offset : offset + limit], len(rows)
         total = await self._queue_query(project_id, queue, who, assignee).count()
         items = await self._queue_query(project_id, queue, who, assignee).order_by_asc("filename").limit(limit).offset(offset).all()
         return items, total
 
-    async def list_refs(self, project_id: str, queue: Queue, who: Caller, assignee: str | None) -> list[ImageItem]:
-        return await self._queue_query(project_id, queue, who, assignee).order_by_asc("filename").all()
+    async def list_refs(
+        self, project_id: str, queue: Queue, who: Caller, assignee: str | None,
+        cls: int | None = None, missing: bool = False, count: int | None = None, op: str = "eq",
+    ) -> list[ImageItem]:
+        """Ảnh của một danh sách, lọc theo lớp và số đối tượng (xem `matches_filter`).
+
+        Lọc làm bằng Python trên nhãn JSON: database chỉ có LIKE, không làm được "không chứa" hay đếm, và so
+        chuỗi JSON dễ khớp nhầm. Mỗi danh sách vài nghìn ảnh nên vẫn nhanh.
+        """
+        rows = await self._queue_query(project_id, queue, who, assignee).order_by_asc("filename").all()
+        if cls is None and count is None:
+            return rows
+        return [r for r in rows if matches_filter(json.loads(r.annotations or "[]"), cls, missing, count, op)]
 
     # ------------------------------------------------------------ cột mới trên dữ liệu cũ
     async def backfill_new_columns(self) -> int:
@@ -528,10 +557,50 @@ class ImageService:
     async def delete_image(self, image_id: str, by: str = "") -> None:
         item = await self.get_image(image_id)
         await self._changed(item, "deleted", by)
-        await self._repo.delete(image_id)
-        await self._revisions.delete_where(image_id=image_id)
+        await self._remove(item)
+
+    async def _remove(self, item: ImageItem) -> None:
+        await self._repo.delete(item.id)
+        await self._revisions.delete_where(image_id=item.id)
         self._storage.image_path(item.project_id, item.stored_name).unlink(missing_ok=True)
         self._storage.thumb_path(item.project_id, item.id).unlink(missing_ok=True)
+
+    async def delete_many(self, project_id: str, ids: list[str], who: Caller) -> tuple[int, int]:
+        """Xoá nhiều ảnh. Trả (số đã xoá, số bỏ qua).
+
+        Bỏ qua ảnh không thuộc project và ảnh đang có NGƯỜI KHÁC mở (họ đang gán dở). Mỗi người được
+        giao nhận MỘT thông báo tổng hợp, không phải mỗi ảnh một tin.
+        """
+        await self._projects.get_entity(project_id)
+        now = utcnow()
+        per_owner: dict[str, list[str]] = {}
+        skipped = 0
+        for image_id in ids:
+            item = await self._repo.get(image_id)
+            current = holder(item, now) if item else ""
+            if item is None or item.project_id != project_id or (current and current != who.username):
+                skipped += 1
+                continue
+            await self._remove(item)
+            per_owner.setdefault(item.assigned_to, []).append(item.id)
+        done = sum(len(v) for v in per_owner.values())
+        if done:
+            await self._projects.touch(project_id)
+            await self._live.project(project_id, "deleted", who.username, image_ids=[i for v in per_owner.values() for i in v])
+            for owner, owned in per_owner.items():
+                await self._live.user(owner, project_id, "deleted", who.username, image_ids=owned, count=len(owned))
+        log.info("images.deleted", project=project_id, count=done, skipped=skipped, by=who.username)
+        return done, skipped
+
+    async def delete_queue(self, project_id: str, queue: Queue, assignee: str | None, who: Caller) -> tuple[int, int]:
+        """Xoá mọi ảnh của một danh sách (theo đúng bộ lọc người được giao đang xem).
+
+        Chỉ cho danh sách "chưa gán nhãn": xoá cả loạt ảnh đã gán / đã duyệt là mất công sức gán nhãn.
+        """
+        if queue is not Queue.UNLABELED:
+            raise BadRequestError("Chỉ xoá hàng loạt được ảnh chưa gán nhãn")
+        rows = await self._queue_query(project_id, queue, who, assignee).all()
+        return await self.delete_many(project_id, [r.id for r in rows], who)
 
     async def file_path(self, image_id: str, who: Caller, *, thumb: bool) -> Path:
         item = await self.get_for(image_id, who)

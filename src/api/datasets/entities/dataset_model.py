@@ -20,6 +20,9 @@ class DatasetVersion(Entity):
     note: str = field(default="", metadata=column(text=True))
     val_ratio: float = 0.2
     include_background: bool = True
+    # Lấy cả ảnh đang chờ duyệt (nhãn chưa được xác nhận), và số ảnh chờ duyệt được đưa vào xét.
+    include_review: bool = False
+    review_count: int = 0
     train_count: int = 0
     val_count: int = 0
     object_count: int = 0

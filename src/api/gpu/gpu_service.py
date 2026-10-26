@@ -418,7 +418,8 @@ class GpuService:
             task, model = "classify", ds.arch
         params = {
             "format": ds.format, "task": task, "model": model, "epochs": payload.epochs, "imgsz": payload.imgsz,
-            "batch": payload.batch, "device": payload.device.strip(), "dataset": ds.name, "version": ds.version,
+            "batch": payload.batch, "device": payload.device.strip(), "workers": payload.workers,
+            "dataset": ds.name, "version": ds.version,
         }
         job = await self._jobs.save(GpuJob(
             id="", kind=JobKind.TRAIN, server_id=payload.server_id, project_id=project_id, dataset_id=ds.id,
@@ -439,8 +440,9 @@ class GpuService:
         if job.kind is JobKind.SETUP:
             return scripts.setup_script(workdir, self._base_python(s), p.get("locate", False))
         if p["task"] == "classify":
-            return scripts.classify_train_script(s.python, p["epochs"], p["imgsz"], p["batch"])
-        return scripts.yolo_train_script(s.python, p["task"], p["model"], p["epochs"], p["imgsz"], p["batch"], p["device"])
+            return scripts.classify_train_script(s.python, p["epochs"], p["imgsz"], p["batch"], p.get("workers", 2))
+        return scripts.yolo_train_script(s.python, p["task"], p["model"], p["epochs"], p["imgsz"], p["batch"], p["device"],
+                                         p.get("workers", 2))
 
     def _prepare(self, s: GpuServer, job: GpuJob, zip_path: Path | None, state: dict) -> str:
         """Tạo thư mục việc, gửi dataset, ghi run.sh. Trả đường dẫn thư mục việc trên server.
@@ -598,9 +600,20 @@ class GpuService:
         if snap["exit"] is None:
             return fields
         fields["finished_at"] = utcnow()
-        if snap["exit"] != 0:
+        trained_all = job.kind is JobKind.TRAIN and job.epochs and len(snap["rows"]) >= job.epochs
+        killed = snap["exit"] in (137, -9)
+        why = " (bị hệ điều hành giết, thường do server hết RAM)" if killed else ""
+        if snap["exit"] != 0 and trained_all and snap["weights"]:
+            # Train đủ epoch, best.pt đã lưu; chỉ chết ở bước kiểm tra lại cuối cùng của Ultralytics -> model vẫn dùng được.
+            fields |= {
+                "status": S.DONE, "progress": 1.0, "weights": snap["weights"],
+                "error": f"Cảnh báo: đã train đủ {job.epochs} epoch và lưu best.pt, nhưng tiến trình dừng ở bước kiểm tra "
+                         f"cuối (mã thoát {snap['exit']}){why}. Model dùng được; chỉ số lấy theo epoch cuối.",
+            }
+        elif snap["exit"] != 0:
             tail = [line for line in snap["log"].splitlines() if line.strip()][-6:]
-            fields |= {"status": S.ERROR, "error": f"Lỗi (mã thoát {snap['exit']}):\n" + "\n".join(tail)}
+            hint = "\nGợi ý: giảm batch / workers, hoặc tắt bớt chương trình khác trên server." if killed else ""
+            fields |= {"status": S.ERROR, "error": f"Lỗi (mã thoát {snap['exit']}){why}:\n" + "\n".join(tail) + hint}
         elif job.kind is JobKind.TRAIN and not snap["weights"]:
             fields |= {"status": S.ERROR, "error": "Train xong nhưng không thấy file best.pt"}
         else:
@@ -643,6 +656,26 @@ class GpuService:
                 self._forget(job.server_id)
                 await self.test_server(job.server_id)
             return
+
+    async def recheck_job(self, job_id: str) -> GpuJob:
+        """Đọc lại thư mục việc trên server (VD việc báo lỗi nhưng thực ra best.pt đã có) và cập nhật trạng thái."""
+        job = await self.get_job(job_id)
+        if job.status in ACTIVE:
+            raise BadRequestError("Việc đang chạy, trạng thái tự cập nhật")
+        if not job.remote_dir:
+            raise BadRequestError("Việc này chưa từng chạy trên server")
+        s = await self.get_server(job.server_id)
+        try:
+            snap = await run_in_threadpool(self._snapshot, s, job)
+        except SshError as e:
+            raise BadRequestError(f"Server GPU '{s.name}': {e.message}") from e
+        if snap is None:
+            raise BadRequestError(f"Thư mục việc không còn trên server: {job.remote_dir}")
+        if snap["exit"] is None:
+            raise BadRequestError("Trên server chưa có kết quả kết thúc của việc này")
+        fields = self._progress(job, snap)
+        fields.pop("gpu_stats", None)
+        return await self._jobs.update(job_id, **fields)
 
     async def stop_job(self, job_id: str) -> GpuJob:
         job = await self.get_job(job_id)

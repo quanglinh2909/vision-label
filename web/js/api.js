@@ -160,6 +160,7 @@ export const api = {
   testStop: session => req('POST', `/gpu/test/stop${qs({ session })}`),
   useModel: (id, serverId) => req('POST', `/gpu/models/${id}/use`, { server_id: serverId }),
   stopGpuJob: id => req('POST', `/gpu/jobs/${id}/stop`),
+  recheckGpuJob: id => req('POST', `/gpu/jobs/${id}/recheck`),
   deleteGpuJob: id => req('DELETE', `/gpu/jobs/${id}`),
   train: (pid, body) => req('POST', `/projects/${pid}/train`, body),
   autolabelConfig: pid => req('GET', `/projects/${pid}/autolabel`),

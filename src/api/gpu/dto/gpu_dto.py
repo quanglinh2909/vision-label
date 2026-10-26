@@ -92,6 +92,7 @@ class TrainCreate(InputSchema):
     imgsz: int = Field(default=640, ge=32, le=4096)
     batch: int = Field(default=16, ge=-1, le=1024, description="-1 = Ultralytics tự chọn theo bộ nhớ GPU")
     device: str = Field(default="", max_length=32, description="VD 0 hoặc 0,1. Trống = tự chọn")
+    workers: int = Field(default=2, ge=0, le=32, description="Số tiến trình đọc dữ liệu; ít thì đỡ tốn RAM")
 
 
 class JobOut(OutputSchema):

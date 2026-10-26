@@ -79,9 +79,16 @@ def setup_script(workdir: str, base_python: str, locate: bool) -> str:
     return _wrap("cài môi trường", body)
 
 
-def yolo_train_script(python: str, task: str, model: str, epochs: int, imgsz: int, batch: int, device: str) -> str:
-    """`task`: detect | pose | segment. Kết quả ghi vào train/ trong thư mục việc."""
-    args = f"data=sys.argv[1], epochs={epochs}, imgsz={imgsz}, batch={batch}, project=str(Path.cwd()), name='train', exist_ok=True"
+def yolo_train_script(
+    python: str, task: str, model: str, epochs: int, imgsz: int, batch: int, device: str, workers: int = 2,
+) -> str:
+    """`task`: detect | pose | segment. Kết quả ghi vào train/ trong thư mục việc.
+
+    `workers`: số tiến trình đọc dữ liệu. Ultralytics mặc định 8, mỗi tiến trình giữ một phần RAM chia sẻ —
+    máy ít RAM dễ bị hệ điều hành giết (mã thoát 137) nhất là ở bước kiểm tra cuối.
+    """
+    args = (f"data=sys.argv[1], epochs={epochs}, imgsz={imgsz}, batch={batch}, workers={workers}, "
+            "project=str(Path.cwd()), name='train', exist_ok=True")
     if device:
         args += f", device={device!r}"
     body = f"""  PY={python}
@@ -99,13 +106,13 @@ PYEOF
     return _wrap(f"train YOLO {task}", body)
 
 
-def classify_train_script(python: str, epochs: int, imgsz: int, batch: int) -> str:
+def classify_train_script(python: str, epochs: int, imgsz: int, batch: int, workers: int = 2) -> str:
     """Dataset phân loại có sẵn train.py (torchvision); best.pt ghi cạnh train.py."""
     body = f"""  PY={python}
   echo "== Giải nén dataset"
   rm -rf data && $PY -m zipfile -e data.zip data
   DIR="$(ls -d data/*/ | head -n 1)"
   echo "== Train phân loại: {epochs} epoch, imgsz {imgsz}, batch {batch}"
-  $PY -u "${{DIR}}train.py" --epochs {epochs} --imgsz {imgsz} --batch {batch}
+  $PY -u "${{DIR}}train.py" --epochs {epochs} --imgsz {imgsz} --batch {batch} --workers {workers}
 """
     return _wrap("train phân loại", body)

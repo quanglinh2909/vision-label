@@ -625,7 +625,7 @@ input.mono { font-family: Consolas, "Cascadia Mono", monospace; font-size: 13.5p
 .job-log pre { margin: 6px 0 0; padding: 10px 12px; background: var(--asphalt-0); border: 1px solid var(--asphalt-4); border-radius: var(--r-ctl);
   font: 12.5px/1.45 Consolas, "Cascadia Mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; }
 .ssh-row { grid-template-columns: minmax(0, 2fr) 110px minmax(0, 1.2fr); }
-.train-row { grid-template-columns: minmax(200px, 2fr) repeat(4, minmax(90px, 1fr)); }
+.train-row { grid-template-columns: minmax(200px, 2fr) repeat(5, minmax(80px, 1fr)); }
 .auto-row { grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(110px, 1fr)); }
 .models-page table.plan input[type=text] { width: 100%; min-width: 180px; }
 .dialog:has(.ssh-row) { width: min(680px, calc(100vw - 32px)); }
@@ -691,3 +691,4 @@ table.plan.metrics td[title] { cursor: help; }
 .vlib { display: grid; gap: 4px; max-height: 320px; overflow-y: auto; }
 .vlib-row { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid var(--asphalt-4); border-radius: 5px; flex-wrap: wrap; }
 .vlib-row b { overflow-wrap: anywhere; }
+.job-error.warn { background: #3a3424; border-color: #6b5d2a; color: #f5e3a8; }

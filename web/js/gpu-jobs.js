@@ -130,7 +130,7 @@ export function jobList(container, { projectId, empty = 'Chưa có việc nào.'
         ${active(j) || j.status === 'done' ? `<div class="bar"><div style="width:${Math.round(j.progress * 100)}%"></div></div>` : ''}
         ${line(j) ? `<p class="small">${line(j)}</p>` : ''}
         ${gpuStats(j)}
-        ${j.error ? `<pre class="job-error">${esc(j.error)}</pre>` : ''}
+        ${j.error ? `<pre class="job-error ${j.status === 'done' ? 'warn' : ''}">${esc(j.error)}</pre>` : ''}
         ${j.weights ? `<p class="small muted">Trọng số trên server: <code>${esc(j.weights)}</code></p>` : ''}
         ${Object.keys(j.metrics || {}).length ? `<details class="job-log job-metrics" data-metrics ${openMetrics.has(j.id) ? 'open' : ''}>
           <summary>Chỉ số (loss, precision, recall, mAP)</summary><div data-mbody></div></details>` : ''}
@@ -138,6 +138,7 @@ export function jobList(container, { projectId, empty = 'Chưa có việc nào.'
         <div class="row">
           ${actions(j)}
           <span class="spacer"></span>
+          ${j.status === 'error' ? '<button class="sm" data-act="recheck" title="Đọc lại kết quả trên server (VD train đã xong và có best.pt nhưng bị báo lỗi)">Kiểm tra lại</button>' : ''}
           ${active(j) ? '<button class="sm danger" data-act="stop">Dừng</button>'
             : '<button class="sm ghost" data-act="del" title="Xoá việc và thư mục của nó trên server (dataset đã gửi, trọng số)">Xoá</button>'}
         </div>
@@ -184,6 +185,10 @@ export function jobList(container, { projectId, empty = 'Chưa có việc nào.'
     b.disabled = true;
     try {
       if (b.dataset.act === 'stop') { await api.stopGpuJob(j.id); toast('Đã dừng'); }
+      else if (b.dataset.act === 'recheck') {
+        const r = await api.recheckGpuJob(j.id);
+        toast(r.status === 'done' ? 'Đã đọc lại: việc này thực ra đã xong, model dùng được' : 'Đã đọc lại: việc này vẫn lỗi', r.status === 'done' ? 'ok' : 'warn', 6000);
+      }
       else { await api.deleteGpuJob(j.id); toast('Đã xoá việc'); }
       await refresh();
     } catch (err) { toast(err.message, 'err'); b.disabled = false; }

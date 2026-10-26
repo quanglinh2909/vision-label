@@ -86,6 +86,8 @@ export async function mount(el, ctx) {
           <label class="field">Kích thước ảnh <input type="number" name="imgsz" min="32" max="4096" step="32" value="640"></label>
           <label class="field">Batch <span class="hint">-1 = tự chọn</span><input type="number" name="batch" min="-1" max="1024" value="16"></label>
           <label class="field">GPU <span class="hint">VD 0 hoặc 0,1</span><input type="text" name="device" maxlength="32" placeholder="tự chọn"></label>
+          <label class="field" title="Số tiến trình đọc dữ liệu song song. Nhiều thì nhanh hơn chút nhưng tốn RAM; server ít RAM bị giết giữa chừng (mã 137) thì giảm xuống">Workers
+            <span class="hint">ít = đỡ RAM</span><input type="number" name="workers" min="0" max="32" value="2"></label>
         </div>
         <label class="field" data-custom>Hoặc train tiếp từ trọng số trên server
           <span class="hint">Đường dẫn file .pt trên server, VD best.pt của lần train trước. Để trống = dùng model gốc ở trên.</span>
@@ -256,6 +258,7 @@ export async function mount(el, ctx) {
           dataset_id: train.dataset_id.value, server_id: train.server_id.value,
           model: yolo ? (train.custom.value.trim() || train.size.value) : '',
           epochs: +train.epochs.value, imgsz: +train.imgsz.value, batch: +train.batch.value, device: train.device.value.trim(),
+          workers: +train.workers.value,
         });
         toast('Đã bắt đầu train. Theo dõi ở danh sách bên dưới.');
         await jobs.refresh();

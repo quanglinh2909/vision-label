@@ -77,6 +77,10 @@ class GpuController:
     async def get_job(self, job_id: JobId) -> JobOut:
         return await self._service.job_out(await self._service.get_job(job_id), detail=True)
 
+    @post("/gpu/jobs/{job_id}/recheck", response_model=JobOut, summary="Đọc lại kết quả của việc trên server")
+    async def recheck_job(self, job_id: JobId) -> JobOut:
+        return await self._service.job_out(await self._service.recheck_job(job_id))
+
     @post("/gpu/jobs/{job_id}/stop", response_model=JobOut, summary="Dừng việc đang chạy")
     async def stop_job(self, job_id: JobId) -> JobOut:
         return await self._service.job_out(await self._service.stop_job(job_id))

@@ -256,3 +256,40 @@ class SavedModelOut(OutputSchema):
             metrics=json.loads(m.metrics or "{}"), params=json.loads(m.params or "{}"), size=m.size or 0,
             created_by=m.created_by, created_at=m.created_at,
         )
+
+
+class AuditStart(InputSchema):
+    """Soát nhãn bằng model."""
+
+    # Model đã lưu của project. Trống = dùng model + lớp của cấu hình tự gán nhãn.
+    model_id: str = Field(default="", max_length=36)
+    # Server GPU chạy model đã lưu. Trống = server của cấu hình tự gán nhãn.
+    server_id: str = Field(default="", max_length=36)
+
+    # Ảnh đã duyệt, và tuỳ chọn cả ảnh đang chờ duyệt.
+    include_review: bool = False
+    # Model chắc từ mức này trở lên mới báo "thiếu nhãn" / "sai lớp".
+    conf: float = Field(default=0.5, ge=0.05, le=1.0)
+    # Đúng lớp mà IoU với khung của model dưới mức này thì báo "khung lệch". 0 = không soát khung.
+    loose_iou: float = Field(default=0.6, ge=0.0, le=0.95)
+    # Báo nhãn model không thấy gì ở đó (dễ báo nhầm với vật nhỏ, khó).
+    check_extra: bool = True
+    # Ảnh đã duyệt mà có chỗ nghi sai thì đưa lại vào Cần review. Tắt = chỉ đánh dấu.
+    move: bool = True
+
+
+class AuditState(OutputSchema):
+    running: bool = False
+    total: int = 0
+    done: int = 0
+    flagged: int = Field(default=0, description="Số ảnh có chỗ nghi sai")
+    moved: int = Field(default=0, description="Số ảnh đã duyệt được đưa lại vào Cần review")
+    skipped: int = Field(default=0, description="Ảnh bỏ qua: đang có người mở, nhãn vừa đổi, mất file...")
+    kinds: dict[str, int] = Field(default_factory=dict, description="Số chỗ nghi sai theo loại (xem gpu/audit.py)")
+    params: dict[str, Any] = Field(default_factory=dict)
+    model: str = ""
+    by: str = ""
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error: str = ""
+    stopped: bool = False

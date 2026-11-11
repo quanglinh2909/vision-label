@@ -7,6 +7,8 @@
 
 import { clamp } from '../ui.js';
 
+const MARK_COLOR = '#ffb366';
+
 export class Editor {
   constructor({ canvas, loupe, tool, classes, onChange }) {
     Object.assign(this, { canvas, loupe, tool, classes, onChange });
@@ -20,6 +22,11 @@ export class Editor {
     this.hide = false;
     this.dirty = false;
     this.history = [];
+    // Chỗ model nghi nhãn sai (soát nhãn): [{box: [x1, y1, x2, y2] chuẩn hoá, text, ...}]. Bấm vào nhãn chữ của
+    // một chỗ thì gọi onMark(chỗ đó) — trình gán nhãn nhận theo model.
+    this.marks = [];
+    this.onMark = null;
+    this._markHits = []; // vùng nhãn chữ trên canvas chính, để biết bấm trúng chỗ nào
     this.currentClass = classes[0]?.id ?? 0; // id lớp dùng cho đối tượng vẽ tiếp theo
     tool.editor = this;
     this._raf = false;
@@ -111,6 +118,8 @@ export class Editor {
         } else if (e.button === 2) {
           this.pan = { sx, sy, ox: this.view.ox, oy: this.view.oy, moved: false, right: true };
         } else if (e.button === 0) {
+          const m = this._markAt(sx, sy);
+          if (m) { this.onMark?.(m); return; }
           this.tool.down(sx, sy);
           this.requestRender();
         }
@@ -126,7 +135,7 @@ export class Editor {
           this.tool.move(sx, sy);
         }
         if (this.img) {
-          c.style.cursor = this.space || this.pan?.moved ? 'grab' : this.tool.cursor(sx, sy);
+          c.style.cursor = this.space || this.pan?.moved ? 'grab' : this._markAt(sx, sy) ? 'pointer' : this.tool.cursor(sx, sy);
           this.requestRender();
         }
       },
@@ -186,7 +195,38 @@ export class Editor {
     c.drawImage(this.img, ox, oy, this.W * s, this.H * s);
     const P = ([x, y]) => [x * s + ox, y * s + oy];
     this.tool.draw(c, P, lw, this.hide);
+    if (!this.hide) this._marks(c, P, lw);
     c.restore();
+  }
+
+  _marks(c, P, lw) {
+    c.strokeStyle = MARK_COLOR;
+    c.lineWidth = 2 * lw;
+    c.setLineDash([6 * lw, 4 * lw]);
+    for (const m of this.marks) {
+      const [x1, y1] = P([m.box[0] * this.W, m.box[1] * this.H]), [x2, y2] = P([m.box[2] * this.W, m.box[3] * this.H]);
+      const pad = 3 * lw; // nới ra để không đè lên khung của nhãn
+      c.strokeRect(x1 - pad, y1 - pad, x2 - x1 + 2 * pad, y2 - y1 + 2 * pad);
+    }
+    c.setLineDash([]);
+    const main = c === this.ctx;
+    if (main) this._markHits = [];
+    for (const m of this.marks) {
+      const [x1, y2] = P([m.box[0] * this.W, m.box[3] * this.H]);
+      const x = x1 - 3 * lw, y = y2 + 19 * lw;
+      label(c, m.text, x, y, MARK_COLOR, lw);
+      if (main) this._markHits.push({ m, x, y: y - 16, w: c.measureText(m.text).width + 8, h: 16 });
+    }
+  }
+
+  _markAt(sx, sy) {
+    if (this.hide || !this.onMark) return null;
+    // Vẽ sau cùng nằm trên -> tìm từ cuối.
+    for (let i = this._markHits.length - 1; i >= 0; i--) {
+      const r = this._markHits[i];
+      if (sx >= r.x && sx <= r.x + r.w && sy >= r.y && sy <= r.y + r.h) return r.m;
+    }
+    return null;
   }
 
   _render() {

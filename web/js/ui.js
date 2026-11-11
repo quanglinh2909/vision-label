@@ -46,6 +46,27 @@ export const clsLabel = c => c?.label || c?.name || '?';
 /** {id lớp: cấu hình lớp} */
 export const classMap = project => Object.fromEntries(project.classes.map(c => [c.id, c]));
 
+/** Các loại nghi vấn của soát nhãn bằng model (gpu/audit.py). */
+export const AUDIT_KINDS = {
+  missing: 'Thiếu nhãn',
+  wrong_cls: 'Có thể sai lớp',
+  extra: 'Model không thấy',
+  loose: 'Khung lệch',
+  duplicate: 'Khung trùng',
+};
+/** Một dòng mô tả một chỗ nghi sai, VD "Có thể sai lớp: nhãn B, model thấy 8 (0.91)". */
+export function auditText(i, classes) {
+  const name = id => clsLabel(classes[id]);
+  const conf = i.conf != null ? ` (${i.conf.toFixed(2)})` : '';
+  return {
+    missing: () => `Thiếu nhãn: model thấy ${name(i.pred)}${conf}`,
+    wrong_cls: () => `Có thể sai lớp: nhãn ${name(i.cls)}, model thấy ${name(i.pred)}${conf}`,
+    extra: () => `Model không thấy gì ở nhãn ${name(i.cls)}`,
+    loose: () => `Khung ${name(i.cls)} lệch so với model (IoU ${i.iou.toFixed(2)})`,
+    duplicate: () => `Khung trùng: ${name(i.cls)} và ${name(i.other)} gần như một chỗ`,
+  }[i.kind]?.() || i.kind;
+}
+
 const svg = body => `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 export const ICONS = {
   upload: svg('<path d="M10 13V3M6 7l4-4 4 4M3 13v3h14v-3"/>'),

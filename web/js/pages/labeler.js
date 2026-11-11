@@ -3,9 +3,9 @@
 import { api } from '../api.js';
 import { ClassifyTool } from '../editor/classify-tool.js';
 import { Editor } from '../editor/editor.js';
-import { ObjectTool } from '../editor/object-tool.js';
+import { bboxOf, ObjectTool } from '../editor/object-tool.js';
 import { filterParams, filterQuery, readClassFilter, STATUS } from '../tiles.js';
-import { $, classColor, clsLabel, esc, fmtDate, h, isAdmin, openDialog, session, SHAPES, toast, UNKNOWN, UNKNOWN_LABEL } from '../ui.js';
+import { $, auditText, classColor, classMap, clsLabel, esc, fmtDate, h, isAdmin, openDialog, session, SHAPES, toast, UNKNOWN, UNKNOWN_LABEL } from '../ui.js';
 
 /** "Ctrl+S" -> keycap Ctrl + keycap S; "mouse:Kéo chuột" -> chữ thao tác chuột; "…" -> dải phím. */
 function keysHtml(alts) {
@@ -102,6 +102,7 @@ export async function mount(el, ctx) {
         <button class="sm ghost" data-act="hide" title="Phím \\" ${classify ? 'hidden' : ''}>Ẩn nhãn</button>
         <button class="sm" data-act="prev" title="Phím ←. Chỉ chuyển ảnh, không duyệt">Ảnh trước</button>
         <button class="sm" data-act="skip" title="Phím →. Chỉ chuyển ảnh, không duyệt">Ảnh sau</button>
+        ${admin ? '<button class="sm ghost" data-act="del" title="Xoá hẳn ảnh khỏi project (kèm nhãn, lịch sử, file) rồi sang ảnh tiếp">Xoá ảnh</button>' : ''}
         ${reviewMode ? '<button class="sm danger" data-act="reject" title="Trả ảnh lại cho người gán kèm ghi chú">Trả lại</button>' : ''}
         <button class="sm" data-act="save" title="${reviewMode ? 'Ctrl+S. Lưu nhãn hiện tại và duyệt' : 'Ctrl+S. Lưu xong ảnh vào mục Cần review chờ duyệt'}">${reviewMode ? 'Duyệt' : 'Lưu'}</button>
         <button class="sm primary" data-act="next" title="${letterNav ? 'Phím D hoặc Enter' : 'Phím Enter'}">${primary}</button>
@@ -168,6 +169,14 @@ export async function mount(el, ctx) {
     if (b) { b.blur(); editor.tool.choose(+b.dataset.q, +b.dataset.v); }
   });
 
+  const cmap = classMap(project);
+  const auditDone = new Set(); // chỗ nghi sai đã xử lý (nhận theo model / bỏ qua) của ảnh đang mở
+  const boxIou = (a, b) => {
+    const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]), h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
+    if (w <= 0 || h <= 0) return 0;
+    const area = r => (r[2] - r[0]) * (r[3] - r[1]);
+    return (w * h) / (area(a) + area(b) - w * h);
+  };
   const editor = new Editor({
     canvas: $('.stage canvas', page),
     loupe: $('.loupe', page),
@@ -276,12 +285,74 @@ export async function mount(el, ctx) {
     // Ghi chú khi bị trả lại: người gán cần biết phải sửa gì; quản trị viên thấy để đối chiếu.
     const note = $('[data-notice]', page);
     const showNote = image.review_note && (image.status === 'rejected' || (reviewMode && image.status === 'in_review'));
-    note.hidden = !showNote;
-    if (showNote) {
-      note.innerHTML = image.status === 'rejected'
+    // Soát nhãn bằng model: liệt kê chỗ nghi sai và khoanh nét đứt trên ảnh. Bấm số trên ảnh hoặc "Theo model"
+    // để nhận theo model, "Bỏ qua" để giữ nhãn. Lưu là hết (nhãn đã đổi).
+    const audit = (image.audit || []).map((it, n) => ({ ...it, n })).filter(it => !auditDone.has(it.n));
+    editor.marks = audit.map(it => ({ box: it.box, n: it.n, text: `${it.n + 1} ${auditShort(it)}` }));
+    editor.requestRender();
+    note.hidden = !showNote && !audit.length;
+    note.innerHTML = [
+      showNote && (image.status === 'rejected'
         ? `<b>Bị trả lại</b> bởi ${esc(image.reviewed_by)}: ${esc(image.review_note)}`
-        : `Lần trước ${esc(image.reviewed_by)} đã trả lại: ${esc(image.review_note)}`;
-    }
+        : `Lần trước ${esc(image.reviewed_by)} đã trả lại: ${esc(image.review_note)}`),
+      audit.length && `<b>Model nghi ${audit.length} chỗ</b> (khoanh nét đứt cam, bấm số trên ảnh để nhận theo model):`
+        + audit.map(it => `<span class="audit-item">${it.n + 1}. ${esc(auditText(it, cmap))}
+          ${readOnly ? '' : `<button class="sm" data-aud-ok="${it.n}">Theo model</button><button class="sm ghost" data-aud-skip="${it.n}">Bỏ qua</button>`}</span>`).join(''),
+    ].filter(Boolean).join('<br>');
+  }
+
+  /** Nhãn ngắn trên ảnh: việc sẽ làm khi bấm. */
+  function auditShort(it) {
+    const name = id => clsLabel(cmap[id]);
+    return { missing: `+${name(it.pred)}`, wrong_cls: `${name(it.cls)}→${name(it.pred)}`, loose: 'khít lại',
+      extra: 'xoá?', duplicate: 'trùng' }[it.kind] || '';
+  }
+
+  /** Nhận theo model ở một chỗ nghi sai: thêm / đổi lớp / thay khung / xoá nhãn. Chưa lưu, Ctrl+Z bỏ được. */
+  function applyAudit(n) {
+    const it = image.audit?.[n];
+    if (!it || readOnly || auditDone.has(n)) return;
+    const T = editor.tool, W = editor.W, H = editor.H;
+    const px = b => [b[0] * W, b[1] * H, b[2] * W, b[3] * H];
+    const name = id => clsLabel(cmap[id]);
+    // Nhãn mà chỗ nghi sai nói tới: cùng lớp, chồng nhiều nhất lên khung đã ghi lúc soát.
+    const find = cls => {
+      let best = -1, top = 0.5;
+      T.objects.forEach((o, k) => {
+        const v = o.cls === cls ? boxIou(bboxOf(o), px(it.box)) : 0;
+        if (v >= top) { top = v; best = k; }
+      });
+      return best;
+    };
+    const fail = msg => { editor.history.pop(); toast(msg, 'warn', 6000); };
+    const gone = 'Không còn thấy nhãn này ở chỗ đó (có thể đã sửa tay). Bấm Bỏ qua.';
+    editor.pushHistory();
+    if (it.kind === 'missing') {
+      const c = cmap[it.pred];
+      const [x1, y1, x2, y2] = px(it.box);
+      if (c.shape === 'box') T.objects.push({ cls: it.pred, box: [x1, y1, x2, y2] });
+      else if (c.shape === 'polygon') T.objects.push({ cls: it.pred, poly: [[x1, y1], [x2, y1], [x2, y2], [x1, y2]] });
+      else return fail(`Lớp ${name(it.pred)} vẽ kiểu pose: model soát chỉ cho khung, hãy đặt điểm bằng tay.`);
+    } else if (it.kind === 'wrong_cls') {
+      const k = find(it.cls);
+      if (k < 0) return fail(gone);
+      if (!T.compatible(T.objects[k], cmap[it.pred])) return fail(`Lớp ${name(it.pred)} vẽ kiểu khác nên không đổi lớp được, hãy vẽ lại.`);
+      T.objects[k].cls = it.pred;
+    } else if (it.kind === 'loose') {
+      const k = find(it.cls);
+      if (k < 0) return fail(gone);
+      if (!T.objects[k].box) return fail('Chỉ thay được khung; điểm pose / đa giác hãy chỉnh bằng tay.');
+      T.objects[k].box = px(it.pred_box);
+    } else if (it.kind === 'extra' || it.kind === 'duplicate') {
+      const k = find(it.kind === 'extra' ? it.cls : it.other);
+      if (k < 0) return fail(gone);
+      T.objects.splice(k, 1);
+    } else return fail('Không biết cách nhận theo model cho chỗ này.');
+    T.sel = -1;
+    auditDone.add(n);
+    editor.markDirty();
+    renderBar();
+    renderSide();
   }
 
   /** Giữ chỗ ảnh; nếu người khác đang giữ thì chuyển sang chỉ xem. */
@@ -320,7 +391,7 @@ export async function mount(el, ctx) {
   const whoLine = img => whoParts(img).map(([v, n]) => `${v} ${n}`).join(', ');
   const whoTitle = img => whoParts(img).map(([v, n, t]) => `${v} ${n}${t ? ` lúc ${fmtDate(t)}` : ''}`).join('\n');
 
-  const ACTION = { label: 'gán nhãn', edit: 'sửa nhãn', clear: 'bỏ nhãn', approve: 'duyệt', reject: 'trả lại', import: 'nhập từ dataset' };
+  const ACTION = { label: 'gán nhãn', edit: 'sửa nhãn', clear: 'bỏ nhãn', approve: 'duyệt', reject: 'trả lại', import: 'nhập từ dataset', audit: 'model nghi sai, đưa lại vào chờ duyệt' };
   async function renderHistory() {
     const list = $('[data-hlist]', page);
     try {
@@ -335,6 +406,7 @@ export async function mount(el, ctx) {
 
   async function open(id) {
     if (image && image.id !== id) release();
+    if (image?.id !== id) auditDone.clear();
     await acquire(id);
     if (!alive) { release(); return; }
     const at = list.indexOf(id);
@@ -472,6 +544,27 @@ export async function mount(el, ctx) {
         ctx.refreshProject();
         return true;
       }).then(ok => { if (ok) actions.skip(); }),
+    del: guard(async () => {
+      const b = $('[data-act=del]', page);
+      if (!b.dataset.armed) {
+        b.dataset.armed = '1'; b.textContent = 'Bấm lần nữa để xoá';
+        setTimeout(() => { delete b.dataset.armed; b.textContent = 'Xoá ảnh'; }, 3000);
+        return;
+      }
+      delete b.dataset.armed; b.textContent = 'Xoá ảnh';
+      const { id, filename } = image;
+      await api.deleteImage(id);
+      toast(`Đã xoá ${filename}`);
+      ctx.refreshProject();
+      editor.dirty = false;
+      image = null; // đã xoá: không trả chỗ giữ cho ảnh không còn
+      list.splice(idx, 1);
+      if (idx < list.length) return open(list[idx]);
+      if (reviewing && idx > 0) return open(list[--idx]);
+      idx -= 1;
+      if (!reviewing) return next({ saveFirst: false });
+      ctx.navigate(backHref);
+    }),
     clear: async () => {
       try {
         image = await api.clearAnnotations(image.id);
@@ -483,6 +576,12 @@ export async function mount(el, ctx) {
     },
   };
   page.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => { b.blur(); actions[b.dataset.act](); }));
+  editor.onMark = m => applyAudit(m.n);
+  $('[data-notice]', page).addEventListener('click', e => {
+    const ok = e.target.closest('[data-aud-ok]'), skip = e.target.closest('[data-aud-skip]');
+    if (ok) applyAudit(+ok.dataset.audOk);
+    if (skip) { auditDone.add(+skip.dataset.audSkip); renderBar(); }
+  });
 
   // Gia hạn chỗ giữ mỗi phút khi còn mở ảnh (chỗ giữ tự hết hạn sau 5 phút).
   const heartbeat = setInterval(async () => {

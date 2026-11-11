@@ -42,7 +42,7 @@ from src.api.gpu.dto.gpu_dto import (
     TrainCreate,
     TrainedModel,
 )
-from src.api.gpu.entities.gpu_model import GpuJob, GpuServer, JobKind, JobStatus, SavedModel
+from src.api.gpu.entities.gpu_model import AutoLabelConfig, GpuJob, GpuServer, JobKind, JobStatus, SavedModel
 from src.api.gpu.ssh import Agent, AgentGone, SshError, Target, q
 from src.core.config import AppSettings
 from src.core.storage import Storage, slugify
@@ -124,10 +124,12 @@ class GpuService:
         jobs: Repository[GpuJob],
         datasets: Repository[DatasetVersion],
         models: Repository[SavedModel],
+        autolabel: Repository[AutoLabelConfig],
         storage: Storage,
         settings: AppSettings,
     ) -> None:
         self._servers = servers
+        self._autolabel = autolabel
         self._jobs = jobs
         self._datasets = datasets
         self._models = models
@@ -675,6 +677,11 @@ class GpuService:
             raise BadRequestError("Trên server chưa có kết quả kết thúc của việc này")
         fields = self._progress(job, snap)
         fields.pop("gpu_stats", None)
+        new = fields.get("weights")
+        if job.weights and new and new != job.weights:
+            # Đường dẫn cũ sai (VD bản cũ đọc nhầm output của zsh): tự gán nhãn đang trỏ vào nó thì trỏ sang đường dẫn đúng.
+            for cfg in await self._autolabel.find(model=job.weights, order_by=None):
+                await self._autolabel.update(cfg.id, model=new)
         return await self._jobs.update(job_id, **fields)
 
     async def stop_job(self, job_id: str) -> GpuJob:

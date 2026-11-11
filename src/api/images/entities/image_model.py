@@ -53,6 +53,9 @@ class ImageItem(Entity):
     reviewed_by: str = field(default="", metadata=column(length=64))
     reviewed_at: datetime | None = None
     review_note: str = field(default="", metadata=column(text=True))
+    # Kết quả lần soát nhãn bằng model gần nhất (JSON list, xem gpu/audit.py): những chỗ model nghi nhãn
+    # sai. "[]" = không nghi gì. Lưu / duyệt / bỏ nhãn là xoá, vì nhãn đã đổi so với lúc soát.
+    audit: str = field(default="[]", metadata=column(text=True))
 
     # Giữ chỗ khi nhiều người cùng gán: ai đang mở ảnh, giữ tới lúc nào. Hết hạn thì
     # coi như trống (đóng tab, mất mạng không làm kẹt ảnh). `lock_token` đổi mỗi lần

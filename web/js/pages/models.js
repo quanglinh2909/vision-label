@@ -1,11 +1,12 @@
 // Model AI của một project (chỉ quản trị viên):
 //   - Tự gán nhãn: chọn server GPU, model (YOLO hoặc LocateAnything-3B), và mỗi lớp của project khớp
 //     với tên lớp / mô tả nào của model. Trình gán nhãn có nút "Tự gán nhãn" dùng cấu hình này.
+//   - Soát nhãn: chạy model đó trên các ảnh đã duyệt, so với nhãn; ảnh nghi sai quay lại Cần review kèm lý do.
 //   - Train: gửi một phiên bản dataset lên server GPU và train; model xong dùng được ngay để tự gán nhãn.
 
 import { api } from '../api.js';
 import { jobList, metricsText } from '../gpu-jobs.js';
-import { $, clsLabel, esc, fmtDate, h, openDialog, SHAPES, toast } from '../ui.js';
+import { $, AUDIT_KINDS, clsLabel, esc, fmtDate, h, openDialog, SHAPES, toast } from '../ui.js';
 import { FORMATS } from './datasets.js';
 
 const ENGINES = {
@@ -71,6 +72,37 @@ export async function mount(el, ctx) {
         </div>
       </form>
       ${detect ? '' : '<p class="notice">Tự gán nhãn hiện chỉ dùng cho project nhận diện đối tượng. Project phân loại vẫn train được ở dưới.</p>'}
+
+      <form class="panel" data-audit autocomplete="off" ${detect ? '' : 'hidden'}>
+        <h3>Soát nhãn bằng model</h3>
+        <p class="muted">Chạy một model đã lưu (hoặc model của phần Tự gán nhãn ở trên) trên từng ảnh đã duyệt,
+          rồi so với nhãn đang có. Ảnh có chỗ nghi sai được đưa lại vào <a href="#/p/${ctx.pid}/review">Cần review</a>; mở ảnh sẽ thấy
+          lý do và chỗ nghi sai được khoanh nét đứt màu cam. Nên dùng model vừa train từ chính dữ liệu này. Model cũng có lúc sai,
+          nên đây chỉ là danh sách để xem lại: nhãn đúng rồi thì cứ bấm Duyệt.</p>
+        <div class="form-row two">
+          <label class="field">Model <select name="model_id"></select></label>
+          <label class="field" data-audit-server>Server GPU <select name="server_id">${serverOptions(cfg?.server_id)}</select></label>
+        </div>
+        <div class="form-row two">
+          <label class="field">Độ tin cậy để báo thiếu nhãn / sai lớp
+            <span class="hint">Cao = ít báo nhầm hơn nhưng dễ sót lỗi</span>
+            <input type="number" name="conf" min="0.05" max="1" step="0.05" value="0.5"></label>
+          <label class="field">Khung lệch khi IoU với model dưới
+            <span class="hint">0 = không soát độ khít của khung</span>
+            <input type="number" name="loose_iou" min="0" max="0.95" step="0.05" value="0.6"></label>
+        </div>
+        <div class="field" style="gap:8px">
+          <label class="check"><input type="checkbox" name="check_extra" checked>
+            Báo cả nhãn mà model không thấy gì ở đó (vẽ nhầm chỗ, nhãn thừa; với vật nhỏ, mờ thì hay báo nhầm)</label>
+          <label class="check"><input type="checkbox" name="include_review"> Soát cả ảnh đang chờ duyệt</label>
+          <label class="check"><input type="checkbox" name="move" checked>
+            Đưa ảnh đã duyệt có chỗ nghi sai lại vào Cần review (bỏ chọn = chỉ đánh dấu, ảnh vẫn ở Đã duyệt)</label>
+        </div>
+        <div data-audit-state></div>
+        <div class="row"><span class="spacer"></span>
+          <button type="button" class="danger" data-audit-stop hidden>Dừng</button>
+          <button class="primary" type="submit" data-audit-start>Bắt đầu soát</button></div>
+      </form>
 
       <form class="panel" data-train autocomplete="off">
         <h3>Train model</h3>
@@ -223,6 +255,78 @@ export async function mount(el, ctx) {
     if (cfg.loaded) $('[data-warm]', page).textContent = 'Model đang nằm trên GPU.';
   }
 
+  // ---------- soát nhãn bằng model ----------
+  const audit = $('[data-audit]', page);
+  let auditTimer = null;
+
+  function renderAudit(st) {
+    const box = $('[data-audit-state]', page);
+    $('[data-audit-start]', page).hidden = st.running;
+    $('[data-audit-stop]', page).hidden = !st.running;
+    if (!st.started_at) { box.innerHTML = ''; return; }
+    const pct = st.total ? Math.round((st.done / st.total) * 100) : 0;
+    const kinds = Object.entries(st.kinds || {}).map(([k, n]) => `${AUDIT_KINDS[k] || k}: ${n}`).join(' · ');
+    const head = st.running ? `Đang soát ${st.done}/${st.total} ảnh…`
+      : st.error ? `<b style="color:var(--err)">Dừng vì lỗi:</b> ${esc(st.error)}`
+      : `${st.stopped ? 'Đã dừng' : 'Xong'} lúc ${fmtDate(st.finished_at)}: soát ${st.done}/${st.total} ảnh`;
+    box.innerHTML = `
+      <div class="bar"><div style="width:${pct}%"></div></div>
+      <p class="small">${head}. Model <code>${esc(st.model)}</code>.
+        <b>${st.flagged}</b> ảnh có chỗ nghi sai${st.moved ? `, <b>${st.moved}</b> ảnh đã đưa lại vào <a href="#/p/${ctx.pid}/review">Cần review</a>` : ''}${st.skipped ? `, bỏ qua ${st.skipped} ảnh (đang có người mở, nhãn vừa đổi, lỗi)` : ''}.</p>
+      ${kinds ? `<p class="small muted">${kinds}</p>` : ''}`;
+  }
+
+  async function pollAudit() {
+    clearTimeout(auditTimer);
+    try {
+      const st = await api.auditState(ctx.pid);
+      renderAudit(st);
+      if (st.running) auditTimer = setTimeout(pollAudit, 2000);
+    } catch { auditTimer = setTimeout(pollAudit, 5000); }
+  }
+
+  /** Danh sách model để soát: các model đã lưu (★ trước) + model đang cấu hình ở Tự gán nhãn. Giữ lựa chọn khi danh sách đổi. */
+  function renderAuditModels(list) {
+    const pick = audit.model_id;
+    const prev = pick.value;
+    const usable = list.filter(m => m.task !== 'classify');
+    pick.innerHTML = usable.map(m => `<option value="${m.id}">${m.starred ? '★ ' : ''}${esc(m.name)} · ${esc(m.dataset)} · ${esc(m.base_model)}</option>`).join('')
+      + '<option value="">Model đang dùng ở Tự gán nhãn</option>';
+    const keep = pick.dataset.touched && [...pick.options].some(o => o.value === prev);
+    pick.value = keep ? prev : (usable[0]?.id ?? '');
+    $('[data-audit-server]', page).hidden = !pick.value;
+  }
+
+  if (detect) {
+    audit.model_id.addEventListener('change', () => {
+      audit.model_id.dataset.touched = '1';
+      $('[data-audit-server]', page).hidden = !audit.model_id.value;
+    });
+    audit.addEventListener('submit', async e => {
+      e.preventDefault();
+      const f = audit;
+      if (!f.model_id.value && !cfg.server_id) return toast('Chọn một model đã lưu, hoặc cấu hình Tự gán nhãn ở trên trước', 'warn');
+      if (f.model_id.value && !f.server_id.value) return toast('Chưa có server GPU nào', 'warn');
+      const btn = $('[data-audit-start]', page);
+      btn.disabled = true;
+      btn.textContent = f.model_id.value ? 'Đang đưa model lên server…' : 'Bắt đầu soát';
+      try {
+        renderAudit(await api.startAudit(ctx.pid, {
+          model_id: f.model_id.value, server_id: f.model_id.value ? f.server_id.value : '',
+          conf: +f.conf.value, loose_iou: +f.loose_iou.value, check_extra: f.check_extra.checked,
+          include_review: f.include_review.checked, move: f.move.checked,
+        }));
+        auditTimer = setTimeout(pollAudit, 1500);
+      } catch (err) { toast(err.message, 'err', 8000); }
+      btn.disabled = false;
+      btn.textContent = 'Bắt đầu soát';
+    });
+    $('[data-audit-stop]', page).addEventListener('click', async () => {
+      try { renderAudit(await api.stopAudit(ctx.pid)); pollAudit(); } catch (err) { toast(err.message, 'err'); }
+    });
+    pollAudit();
+  }
+
   // ---------- train ----------
   const train = $('[data-train]', page);
   function renderBase() {
@@ -276,6 +380,7 @@ export async function mount(el, ctx) {
     const box = $('[data-models]', page);
     let list;
     try { list = await api.models(ctx.pid); } catch (err) { box.innerHTML = `<p class="notice">${esc(err.message)}</p>`; return; }
+    if (detect) renderAuditModels(list);
     if (!list.length) {
       box.innerHTML = '<p class="muted">Chưa lưu model nào. Train xong bấm <b>Lưu model</b> ở danh sách bên dưới.</p>';
       return;
@@ -396,5 +501,5 @@ export async function mount(el, ctx) {
 
   el.replaceChildren(page);
   await Promise.all([jobs.refresh(), renderModels()]);
-  return { unmount: () => jobs.stop() };
+  return { unmount: () => { jobs.stop(); clearTimeout(auditTimer); } };
 }

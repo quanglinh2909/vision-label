@@ -50,6 +50,12 @@ def q(path: str) -> str:
     return shlex.quote(path)
 
 
+def _bash(cmd: str) -> str:
+    """Chạy lệnh bằng bash, không phải shell đăng nhập của tài khoản: shell đó có thể là zsh, mà zsh
+    báo lỗi "no matches found" (không chạy lệnh) khi một glob như `data/*/best.pt` không khớp file nào."""
+    return f"bash -c {shlex.quote(cmd)}"
+
+
 def _pkey(text: str) -> paramiko.PKey:
     for cls in (paramiko.Ed25519Key, paramiko.ECDSAKey, paramiko.RSAKey):
         try:
@@ -97,7 +103,7 @@ def run(
     stdin: str | None = None,
     on_output: Callable[[str], None] | None = None,
 ) -> tuple[int, str]:
-    """Chạy lệnh qua shell của server; trả (mã thoát, stdout + stderr gộp).
+    """Chạy lệnh bằng bash trên server; trả (mã thoát, stdout + stderr gộp).
 
     `stdin`: gửi vào lệnh qua kênh SSH (VD mật khẩu cho `sudo -S`), không lộ trên dòng lệnh hay file.
     `on_output`: nhận output ngay khi tới (lệnh chạy lâu như apt), không phải chờ lệnh xong.
@@ -107,7 +113,7 @@ def run(
         chan = client.get_transport().open_session(timeout=CONNECT_TIMEOUT)
         chan.settimeout(timeout)
         chan.set_combine_stderr(True)
-        chan.exec_command(cmd)
+        chan.exec_command(_bash(cmd))
         if stdin is not None:
             chan.sendall(stdin.encode())
         chan.shutdown_write()
@@ -158,7 +164,7 @@ class Agent:
 
     def __init__(self, client: paramiko.SSHClient, cmd: str) -> None:
         try:
-            self._stdin, self._stdout, _ = client.exec_command(cmd)
+            self._stdin, self._stdout, _ = client.exec_command(_bash(cmd))
         except (OSError, paramiko.SSHException) as e:
             raise SshError(f"Không chạy được agent trên server: {e}") from e
         self._chan = self._stdout.channel

@@ -139,6 +139,14 @@ cũng đi trong kết nối SSH. Thêm được nhiều server.
      phẩy cùng về một lớp (`car, truck, bus`). Model tìm ra lớp khác thì bỏ: chỉ gán đúng các lớp của project.
    - *Train*: chọn phiên bản dataset + server. YOLO detect / pose / segment chạy Ultralytics, phân loại chạy `train.py`
      của dataset. Theo dõi epoch, mAP, log; train xong bấm *Dùng để tự gán nhãn*.
+   - *Soát nhãn bằng model*: chạy model của phần Tự gán nhãn trên mọi ảnh đã duyệt (tuỳ chọn cả ảnh chờ duyệt), so với
+     nhãn đang có và báo: **thiếu nhãn** (model chắc chắn thấy mà không có nhãn), **sai lớp**, **model không thấy** (nhãn
+     thừa / vẽ nhầm chỗ), **khung lệch** (IoU với khung của model dưới ngưỡng), **khung trùng**. Ảnh nghi sai quay lại
+     **Cần review**; mở ảnh thấy lý do, chỗ nghi sai khoanh nét đứt cam. Bấm nhãn số của chỗ khoanh (hoặc *Theo model*)
+     để nhận theo model: thêm khung, đổi lớp, thay bằng khung của model, xoá nhãn thừa / trùng (chưa lưu, `Ctrl+Z` bỏ
+     được); *Bỏ qua* để giữ nhãn. Model soát chỉ cho khung, nên lớp pose thiếu nhãn vẫn phải đặt điểm tay. Lưu / duyệt là
+     xoá dấu. Quản trị viên có nút **Xoá ảnh** ngay trong trình gán nhãn (bấm hai lần), xoá xong sang ảnh tiếp. Ảnh đang có người mở
+     hoặc vừa đổi nhãn trong lúc soát thì bỏ qua. Nên dùng model train từ chính dữ liệu đó; model cũng có lúc sai.
 5. Trong trình gán nhãn có nút **Tự gán nhãn** (cả quản trị viên lẫn người gán): kết quả được **thêm** vào ảnh, chưa lưu,
    `Ctrl+Z` bỏ được; lưu như bình thường nên vẫn qua Cần review. Bật *Mở ảnh chưa có nhãn là tự chạy luôn* nếu muốn.
 

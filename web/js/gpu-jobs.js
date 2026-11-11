@@ -138,7 +138,7 @@ export function jobList(container, { projectId, empty = 'Chưa có việc nào.'
         <div class="row">
           ${actions(j)}
           <span class="spacer"></span>
-          ${j.status === 'error' ? '<button class="sm" data-act="recheck" title="Đọc lại kết quả trên server (VD train đã xong và có best.pt nhưng bị báo lỗi)">Kiểm tra lại</button>' : ''}
+          ${j.status === 'error' || j.status === 'done' ? '<button class="sm" data-act="recheck" title="Đọc lại kết quả trên server (VD train đã xong và có best.pt nhưng bị báo lỗi, hoặc không tải được model)">Kiểm tra lại</button>' : ''}
           ${active(j) ? '<button class="sm danger" data-act="stop">Dừng</button>'
             : '<button class="sm ghost" data-act="del" title="Xoá việc và thư mục của nó trên server (dataset đã gửi, trọng số)">Xoá</button>'}
         </div>

@@ -17,6 +17,7 @@ class RevisionAction(str, Enum):
     APPROVE = "approve"  # quản trị viên duyệt -> vào dataset
     REJECT = "reject"  # quản trị viên trả lại cho người gán
     IMPORT = "import"  # nhập kèm nhãn từ một dataset có sẵn (vào thẳng chờ duyệt)
+    AUDIT = "audit"  # soát nhãn bằng model thấy nghi sai -> đưa lại vào chờ duyệt
 
 
 # Không khai khoá ngoại: lịch sử bị xoá chủ động cùng ảnh / project (xem ImageService,

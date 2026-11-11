@@ -297,10 +297,13 @@ details[data-history] summary .muted { font-size: 13px; margin-left: 6px; }
 /* ---------- phân công & review ---------- */
 .tag.in_review { color: #8fb6ef; }
 .tag.rejected { color: #ff9d96; }
+.tag.audit { color: #ffb366; }
 .tag.assignee { color: #c9b8f5; }
 .notice { background: #3a2626; border: 1px solid #6d3a36; color: #ffd0cc; border-radius: 4px; padding: 9px 12px; }
 .noticebar { padding: 8px 14px; font-size: 14px; background: #3a2626; border-bottom: 1px solid #6d3a36; color: #ffd0cc; }
 .noticebar b { color: #ff9d96; }
+.noticebar .audit-item { display: inline-flex; align-items: center; gap: 6px; margin: 6px 14px 0 0; }
+.noticebar .audit-item button { padding: 2px 8px; }
 .review-groups { display: grid; gap: 16px; }
 .review-group .row h3 { margin-right: 4px; }
 .assign-form { display: grid; grid-template-columns: minmax(180px, 1.5fr) minmax(170px, 1fr) auto; gap: 12px; align-items: end; }

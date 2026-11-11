@@ -88,6 +88,7 @@ class ImageOut(OutputSchema):
     reviewed_by: str
     reviewed_at: datetime | None
     review_note: str
+    audit: list[dict[str, Any]] = Field(description="Chỗ model nghi nhãn sai ở lần soát gần nhất (xem gpu/audit.py)")
     created_at: datetime
     updated_at: datetime
 
@@ -111,6 +112,7 @@ class ImageOut(OutputSchema):
             reviewed_by=item.reviewed_by,
             reviewed_at=item.reviewed_at,
             review_note=item.review_note,
+            audit=json.loads(item.audit or "[]"),
             created_at=item.created_at,
             updated_at=item.updated_at,
         )

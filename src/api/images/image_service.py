@@ -365,6 +365,7 @@ class ImageService:
         if first:
             item.labeled_by, item.labeled_at = who.username, now
         item.edited_by, item.edited_at = who.username, now
+        item.audit = "[]"  # nhãn đã đổi so với lúc model soát
         # Ảnh chưa giao ai mà quản trị viên tự gán: ghi họ là người làm, để trong "Cần review"
         # ảnh nằm đúng nhóm của họ và bị trả lại thì về đúng người.
         if not item.assigned_to:
@@ -391,7 +392,7 @@ class ImageService:
             raise ConflictError(f"Ảnh đang được {current} mở")
         if not who.admin and item.status is S.LABELED:
             raise ForbiddenError("Ảnh đã được duyệt, không sửa được nữa")
-        item.annotations, item.object_count, item.status = "[]", 0, S.UNLABELED
+        item.annotations, item.object_count, item.status, item.audit = "[]", 0, S.UNLABELED, "[]"
         # Lần gán sau tính là gán mới; người bỏ nhãn được ghi là người sửa cuối.
         item.labeled_by, item.labeled_at = "", None
         item.edited_by, item.edited_at = who.username, utcnow()
@@ -412,6 +413,7 @@ class ImageService:
                 continue
             item.status = S.LABELED
             item.reviewed_by, item.reviewed_at, item.review_note = who.username, now, ""
+            item.audit = "[]"
             await self._repo.save(item)
             await self._log(item, who.username, RevisionAction.APPROVE)
             per_owner.setdefault(item.assigned_to, []).append(item.id)
@@ -470,6 +472,29 @@ class ImageService:
                 await self._live.user(owner, project_id, "rejected", who.username,
                                       image_ids=[i for i, _ in owned], count=len(owned), note=note, **extra)
         return done, skipped
+
+    # ------------------------------------------------------------ soát nhãn bằng model (gpu/audit_service.py)
+    async def set_audit(self, image_id: str, issues: list[dict], seen: str, *, move: bool, by: str) -> bool:
+        """Ghi kết quả soát của một ảnh; `move` thì ảnh đã duyệt có chỗ nghi sai quay lại chờ duyệt.
+
+        `seen` là chuỗi nhãn lúc gửi ảnh cho model: nhãn đã đổi trong lúc chờ (ai đó vừa lưu) thì bỏ, vì kết quả
+        so với nhãn cũ. Ảnh đang có người mở cũng bỏ, để không đổi trạng thái dưới tay họ. Trả True nếu đã ghi.
+        """
+        item = await self._repo.get(image_id)
+        if item is None or item.annotations != seen or holder(item):
+            return False
+        if not issues and (item.audit or "[]") == "[]":
+            return True
+        item.audit = json.dumps(issues, ensure_ascii=False)
+        moved = move and bool(issues) and item.status is S.LABELED
+        if moved:
+            item.status = S.IN_REVIEW
+            # Ảnh không giao cho ai (VD nhập từ dataset) vẫn cần một nhóm trong Cần review.
+            item.assigned_to = item.assigned_to or item.labeled_by
+        await self._repo.save(item)
+        if moved:
+            await self._log(item, by, RevisionAction.AUDIT)
+        return True
 
     # ------------------------------------------------------------ phân công (quản trị viên)
     async def assign(self, project_id: str, username: str, count: int, by: str = "") -> int:

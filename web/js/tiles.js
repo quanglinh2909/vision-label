@@ -1,7 +1,7 @@
 // Ô ảnh thu nhỏ có vẽ sẵn nhãn — dùng chung cho các lưới ảnh và trang review.
 
 import { api } from './api.js';
-import { $, classColor, classMap, clsLabel, esc, getLabeler, h, isAdmin, kpColor, ocrText, plate, toast, UNKNOWN } from './ui.js';
+import { $, auditText, classColor, classMap, clsLabel, esc, getLabeler, h, isAdmin, kpColor, ocrText, plate, toast, UNKNOWN } from './ui.js';
 
 export const STATUS = {
   unlabeled: 'Chưa gán',
@@ -74,6 +74,7 @@ export function imageTile(img, project, { href, assignee = false, onDeleted } = 
     img.reviewed_by && img.status === 'labeled' && `Duyệt bởi ${img.reviewed_by}`,
     img.status === 'rejected' && img.review_note && `Trả lại: ${img.review_note}`,
     busy && `${img.locked_by} đang mở`,
+    ...(img.audit || []).map(i => `Model nghi: ${auditText(i, classMap(project))}`),
   ].filter(Boolean).join('\n');
 
   let summary = '';
@@ -92,6 +93,7 @@ export function imageTile(img, project, { href, assignee = false, onDeleted } = 
         ${summary}
         ${assignee && img.assigned_to ? `<span class="tag assignee">${esc(img.assigned_to)}</span>` : ''}
         ${busy ? `<span class="tag busy">${esc(img.locked_by)} đang mở</span>` : ''}
+        ${img.audit?.length ? `<span class="tag audit">Model nghi ${img.audit.length} chỗ</span>` : ''}
         <span class="fname">${esc(img.filename)}</span>
       </div>
       ${isAdmin() && onDeleted ? '<button class="del sm danger" title="Xoá ảnh khỏi project">Xoá</button>' : ''}

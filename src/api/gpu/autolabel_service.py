@@ -23,6 +23,7 @@ from src.api.gpu.autolabel import queries, to_objects
 from src.api.gpu.dto.gpu_dto import AutoLabelAvailable, AutoLabelOut, AutoLabelResult, AutoLabelUpdate, WarmupResult
 from src.api.gpu.entities.gpu_model import AutoLabelConfig, Engine
 from src.api.gpu.gpu_service import BASE_MODEL, GpuService
+from src.api.images.entities.image_model import ImageItem
 from src.api.images.image_service import ImageService
 from src.api.projects.classes import load as load_classes
 from src.api.projects.entities.project_model import TaskType
@@ -87,7 +88,7 @@ class AutoLabelService:
 
     async def unload(self, project_id: str) -> AutoLabelOut:
         """Gỡ model của project khỏi GPU. Lần tự gán nhãn sau sẽ tự nạp lại."""
-        cfg = await self._ready(project_id)
+        cfg = await self.ready(project_id)
         await self._gpu.call_if_running(cfg.server_id, {"op": "unload", "engine": cfg.engine.value, "model": model_of(cfg)})
         return await self.out(project_id)
 
@@ -130,7 +131,7 @@ class AutoLabelService:
             return AutoLabelAvailable(enabled=False)
         return AutoLabelAvailable(enabled=True, on_open=cfg.on_open, on_open_review=cfg.on_open_review, engine=cfg.engine, server_name=server.name)
 
-    async def _ready(self, project_id: str) -> AutoLabelConfig:
+    async def ready(self, project_id: str) -> AutoLabelConfig:
         cfg = await self._repo.get(project_id)
         if cfg is None or not cfg.server_id:
             raise BadRequestError(
@@ -140,7 +141,7 @@ class AutoLabelService:
 
     async def warmup(self, project_id: str) -> WarmupResult:
         """Nạp model lên GPU trước (lần đầu có thể phải tải model về server), để người gán khỏi chờ."""
-        cfg = await self._ready(project_id)
+        cfg = await self.ready(project_id)
         resp = await self._gpu.agent_call(cfg.server_id, {"op": "load", "engine": cfg.engine.value, "model": model_of(cfg)})
         if not resp.get("ok"):
             raise BadRequestError(f"Không nạp được model: {resp.get('error')}")
@@ -152,26 +153,31 @@ class AutoLabelService:
         project = await self._projects.get_entity(item.project_id)
         if project.task is not TaskType.DETECT:
             raise BadRequestError("Tự gán nhãn chỉ dùng cho project nhận diện đối tượng")
-        cfg = await self._ready(project.id)
+        cfg = await self.ready(project.id)
         classes = load_classes(project.classes)
         lookup, notes = queries(classes, json.loads(cfg.classes or "{}"), cfg.engine)
         if not lookup:
             raise BadRequestError("Không có lớp nào bật tự gán nhãn (xem mục Model AI)")
-        path = self._storage.image_path(project.id, item.stored_name)
-        if not path.is_file():
-            raise BadRequestError(f"Mất file ảnh trên đĩa: {item.filename}")
-        model = model_of(cfg)
-        msg = {
-            "op": "detect", "engine": cfg.engine.value, "model": model, "image": await run_in_threadpool(_encode, path),
-            "conf": cfg.conf, "iou": cfg.iou, "imgsz": cfg.imgsz,
-            "prompts": list(lookup), "mode": cfg.mode, "max_new_tokens": cfg.max_new_tokens,
-        }
-        resp = await self._gpu.agent_call(cfg.server_id, msg)
-        if not resp.get("ok"):
-            raise BadRequestError(f"Server GPU báo lỗi: {resp.get('error')}")
+        resp = await self.detect(cfg, lookup, project.id, item)
         dets = resp.get("dets", [])
         objects, more = to_objects(classes, lookup, dets)
         log.info("autolabel.done", image=image_id, engine=cfg.engine.value, found=len(dets), kept=len(objects),
                  seconds=resp.get("seconds"))
         return AutoLabelResult(objects=objects, notes=notes + more, found=len(dets), seconds=resp.get("seconds", 0),
-                               engine=cfg.engine, model=model)
+                               engine=cfg.engine, model=model_of(cfg))
+
+    async def detect(self, cfg: AutoLabelConfig, lookup: dict[str, int], project_id: str, item: ImageItem,
+                     conf: float | None = None) -> dict:
+        """Gửi một ảnh cho agent; trả phản hồi của nó (`dets`, `seconds`). Dùng chung với soát nhãn."""
+        path = self._storage.image_path(project_id, item.stored_name)
+        if not path.is_file():
+            raise BadRequestError(f"Mất file ảnh trên đĩa: {item.filename}")
+        msg = {
+            "op": "detect", "engine": cfg.engine.value, "model": model_of(cfg), "image": await run_in_threadpool(_encode, path),
+            "conf": cfg.conf if conf is None else conf, "iou": cfg.iou, "imgsz": cfg.imgsz,
+            "prompts": list(lookup), "mode": cfg.mode, "max_new_tokens": cfg.max_new_tokens,
+        }
+        resp = await self._gpu.agent_call(cfg.server_id, msg)
+        if not resp.get("ok"):
+            raise BadRequestError(f"Server GPU báo lỗi: {resp.get('error')}")
+        return resp

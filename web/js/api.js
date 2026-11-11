@@ -170,6 +170,10 @@ export const api = {
   warmupAutolabel: pid => req('POST', `/projects/${pid}/autolabel/warmup`),
   unloadAutolabel: pid => req('POST', `/projects/${pid}/autolabel/unload`),
   autolabelAvailable: pid => req('GET', `/projects/${pid}/autolabel/available`),
+  auditState: pid => req('GET', `/projects/${pid}/audit`),
+  /** Soát nhãn bằng model (chạy nền); ảnh nghi sai được đánh dấu và đưa lại vào Cần review. */
+  startAudit: (pid, body) => req('POST', `/projects/${pid}/audit`, body),
+  stopAudit: pid => req('POST', `/projects/${pid}/audit/stop`),
   /** Chạy model cho một ảnh; kết quả chưa được lưu. */
   autolabel: id => req('POST', `/images/${id}/autolabel`),
   /** Link tải kèm key: dùng được cả khi không đăng nhập (curl, Colab). */
